@@ -14,6 +14,6 @@ services:
       - key: FLASK_ENV
         value: production
       - key: PYTHON_VERSION
-        value: 3.11.0
+        value: 3.11.9
       - key: PIP_NO_CACHE_DIR
         value: "1"
