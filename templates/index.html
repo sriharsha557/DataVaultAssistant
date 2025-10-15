@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DataVault Assistant</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.26.0/cytoscape.min.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <aside class="sidebar">
+            <header class="sidebar-header">
+                <h1>🚀 DataVault Assistant</h1>
+                <p class="subtitle">AI-Powered Data Vault 2.1 Model Generator</p>
+            </header>
+
+            <div class="config-status" id="configStatus">
+                <div class="status-item">
+                    <span class="status-label">OCR API:</span>
+                    <span class="status-value" id="ocrStatus">⏳ Checking...</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">GROQ API:</span>
+                    <span class="status-value" id="groqStatus">⏳ Checking...</span>
+                </div>
+            </div>
+
+            <section class="section">
+                <h2>📚 1. Knowledge Base (Optional)</h2>
+                <p class="help-text">Upload DV2.1 methodology for grounded generation</p>
+                <input type="file" id="knowledgeFile" accept=".txt,.md,.pdf">
+                <button onclick="uploadKnowledge()" class="btn btn-secondary">
+                    Upload Methodology
+                </button>
+                <div id="knowledgeStatus"></div>
+            </section>
+
+            <section class="section">
+                <h2>🖼️ 2. Upload Source Model</h2>
+                <p class="help-text">Upload ERD image or PDF of your source database</p>
+                <input type="file" id="sourceFile" accept="image/*,.pdf">
+                <button onclick="uploadSource()" class="btn btn-primary" id="uploadBtn">
+                    Extract Schema (OCR)
+                </button>
+                <div id="uploadStatus"></div>
+            </section>
+
+            <section class="section">
+                <h2>🧠 3. Generate DV Model</h2>
+                <div class="checkbox-group">
+                    <label>
+                        <input type="checkbox" id="groundedMode">
+                        Use Knowledge-Grounded Mode
+                    </label>
+                </div>
+                <button onclick="generateModel()" class="btn btn-primary" id="generateBtn" disabled>
+                    Generate Data Vault 2.1
+                </button>
+                <div id="generateStatus"></div>
+            </section>
+
+            <section class="section">
+                <h2>📊 Model Summary</h2>
+                <div class="model-stats" id="modelStats">
+                    <div class="stat-item">
+                        <span class="stat-value" id="hubCount">0</span>
+                        <span class="stat-label">Hubs</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-value" id="linkCount">0</span>
+                        <span class="stat-label">Links</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-value" id="satCount">0</span>
+                        <span class="stat-label">Satellites</span>
+                    </div>
+                </div>
+            </section>
+
+            <section class="section">
+                <h2>💾 4. Export Model</h2>
+                <button onclick="exportJSON()" class="btn btn-secondary">Export JSON</button>
+                <button onclick="exportCSV()" class="btn btn-secondary">Export CSV</button>
+                <button onclick="exportDrawIO()" class="btn btn-secondary">Export Draw.io XML</button>
+            </section>
+        </aside>
+
+        <main class="canvas-area">
+            <div class="canvas-controls">
+                <button onclick="resetLayout()" class="btn-icon" title="Reset Layout">🔄</button>
+                <button onclick="fitToScreen()" class="btn-icon" title="Fit to Screen">⊡</button>
+                <button onclick="zoomIn()" class="btn-icon" title="Zoom In">➕</button>
+                <button onclick="zoomOut()" class="btn-icon" title="Zoom Out">➖</button>
+            </div>
+
+            <div class="legend">
+                <h3>Legend</h3>
+                <div class="legend-item">
+                    <div class="legend-color hub"></div>
+                    <span>Hub (Business Keys)</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color link"></div>
+                    <span>Link (Relationships)</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color satellite"></div>
+                    <span>Satellite (Attributes)</span>
+                </div>
+            </div>
+
+            <div id="cy"></div>
+        </main>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
