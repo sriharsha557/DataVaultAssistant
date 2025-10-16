@@ -236,7 +236,7 @@ def upload_file():
         cursor.execute("""
             INSERT INTO ocr_results (filename, extracted_text, created_at)
             VALUES (?, ?, ?)
-        """, [filename, extracted_text, datetime.now().isoformat()])
+        """, (filename, extracted_text, datetime.now().isoformat()))
         
         # Get the last inserted ID
         ocr_id = cursor.lastrowid
@@ -278,7 +278,7 @@ def generate_model():
         cursor = conn.cursor()
         
         # Get OCR text
-        cursor.execute("SELECT extracted_text FROM ocr_results WHERE id = ?", [ocr_id])
+        cursor.execute("SELECT extracted_text FROM ocr_results WHERE id = ?", (ocr_id,))
         result = cursor.fetchone()
         
         if not result:
@@ -301,7 +301,7 @@ def generate_model():
         cursor.execute("""
             INSERT INTO dv_models (ocr_id, model_json, grounded, created_at)
             VALUES (?, ?, ?, ?)
-        """, [ocr_id, json.dumps(model), 1 if grounded else 0, datetime.now().isoformat()])
+        """, (ocr_id, json.dumps(model), 1 if grounded else 0, datetime.now().isoformat()))
         
         model_id = cursor.lastrowid
         conn.commit()
@@ -337,7 +337,7 @@ def upload_knowledge():
         cursor.execute("""
             INSERT INTO knowledge_docs (name, content, uploaded_at)
             VALUES (?, ?, ?)
-        """, [filename, content, datetime.now().isoformat()])
+        """, (filename, content, datetime.now().isoformat()))
         
         conn.commit()
         
@@ -394,7 +394,7 @@ def get_model(model_id):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        cursor.execute("SELECT model_json FROM dv_models WHERE id = ?", [model_id])
+        cursor.execute("SELECT model_json FROM dv_models WHERE id = ?", (model_id,))
         result = cursor.fetchone()
         
         if not result:
