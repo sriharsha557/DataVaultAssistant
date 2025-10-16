@@ -99,11 +99,32 @@ document.addEventListener('DOMContentLoaded', function() {
     checkConfig();
 });
 
+// Safe JSON parsing helper
+async function parseJSON(response) {
+    const text = await response.text();
+    
+    if (!text) {
+        throw new Error('Empty response from server');
+    }
+    
+    try {
+        return JSON.parse(text);
+    } catch (e) {
+        console.error('Failed to parse JSON:', text);
+        throw new Error(`Invalid JSON response: ${text.substring(0, 200)}`);
+    }
+}
+
 // Check API configuration
 async function checkConfig() {
     try {
         const response = await fetch('/api/config/check');
-        const data = await response.json();
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const data = await parseJSON(response);
         
         document.getElementById('ocrStatus').textContent = data.ocr_configured ? '✅ Configured' : '❌ Not Set';
         document.getElementById('ocrStatus').className = `status-value ${data.ocr_configured ? 'success' : 'error'}`;
@@ -112,6 +133,8 @@ async function checkConfig() {
         document.getElementById('groqStatus').className = `status-value ${data.groq_configured ? 'success' : 'error'}`;
     } catch (error) {
         console.error('Config check failed:', error);
+        document.getElementById('ocrStatus').textContent = '⚠️ Error';
+        document.getElementById('groqStatus').textContent = '⚠️ Error';
     }
 }
 
@@ -136,14 +159,22 @@ async function uploadKnowledge() {
             body: formData
         });
         
-        const data = await response.json();
+        if (!response.ok) {
+            const data = await parseJSON(response);
+            showStatus('knowledgeStatus', `❌ ${data.error || 'Upload failed'}`, 'error');
+            return;
+        }
+        
+        const data = await parseJSON(response);
         
         if (data.success) {
             showStatus('knowledgeStatus', '✅ Methodology uploaded successfully!', 'success');
+            fileInput.value = '';
         } else {
-            showStatus('knowledgeStatus', `❌ ${data.error}`, 'error');
+            showStatus('knowledgeStatus', `❌ ${data.error || 'Unknown error'}`, 'error');
         }
     } catch (error) {
+        console.error('Knowledge upload error:', error);
         showStatus('knowledgeStatus', `❌ Upload failed: ${error.message}`, 'error');
     }
 }
@@ -170,16 +201,24 @@ async function uploadSource() {
             body: formData
         });
         
-        const data = await response.json();
+        if (!response.ok) {
+            const data = await parseJSON(response);
+            showStatus('uploadStatus', `❌ ${data.error || 'Upload failed'}`, 'error');
+            return;
+        }
+        
+        const data = await parseJSON(response);
         
         if (data.success) {
             currentOcrId = data.ocr_id;
             showStatus('uploadStatus', `✅ Schema extracted successfully!\n\nPreview: ${data.extracted_text}`, 'success');
             document.getElementById('generateBtn').disabled = false;
+            fileInput.value = '';
         } else {
-            showStatus('uploadStatus', `❌ ${data.error}`, 'error');
+            showStatus('uploadStatus', `❌ ${data.error || 'Extraction failed'}`, 'error');
         }
     } catch (error) {
+        console.error('Upload error:', error);
         showStatus('uploadStatus', `❌ Upload failed: ${error.message}`, 'error');
     } finally {
         document.getElementById('uploadBtn').disabled = false;
@@ -210,17 +249,24 @@ async function generateModel() {
             })
         });
         
-        const data = await response.json();
+        if (!response.ok) {
+            const data = await parseJSON(response);
+            showStatus('generateStatus', `❌ ${data.error || 'Generation failed'}`, 'error');
+            return;
+        }
         
-        if (data.success) {
+        const data = await parseJSON(response);
+        
+        if (data.success && data.model) {
             currentModel = data.model;
             showStatus('generateStatus', '✅ Model generated successfully!', 'success');
             visualizeModel(data.model);
             updateStats(data.model);
         } else {
-            showStatus('generateStatus', `❌ ${data.error}`, 'error');
+            showStatus('generateStatus', `❌ ${data.error || 'No model returned'}`, 'error');
         }
     } catch (error) {
+        console.error('Generate error:', error);
         showStatus('generateStatus', `❌ Generation failed: ${error.message}`, 'error');
     } finally {
         document.getElementById('generateBtn').disabled = false;
@@ -232,55 +278,61 @@ function visualizeModel(model) {
     cy.elements().remove();
     
     if (!model.nodes || model.nodes.length === 0) {
+        showStatus('generateStatus', '⚠️ Model has no nodes', 'error');
         return;
     }
     
-    // Add nodes
-    model.nodes.forEach(node => {
-        cy.add({
-            group: 'nodes',
-            data: {
-                id: node.id,
-                label: node.id.replace(/^(Hub_|Link_|Sat_)/, ''),
-                type: node.type,
-                businessKey: node.businessKey,
-                parent: node.parent,
-                connects: node.connects,
-                attributes: node.attributes,
-                sourceTable: node.sourceTable,
-                borderColor: node.type === 'hub' ? '#2c5aa0' : node.type === 'link' ? '#43a047' : '#f57c00'
-            }
-        });
-    });
-    
-    // Add edges
-    if (model.edges) {
-        model.edges.forEach(edge => {
+    try {
+        // Add nodes
+        model.nodes.forEach(node => {
             cy.add({
-                group: 'edges',
+                group: 'nodes',
                 data: {
-                    source: edge.from,
-                    target: edge.to
+                    id: node.id,
+                    label: node.id.replace(/^(Hub_|Link_|Sat_)/, ''),
+                    type: node.type,
+                    businessKey: node.businessKey,
+                    parent: node.parent,
+                    connects: node.connects,
+                    attributes: node.attributes,
+                    sourceTable: node.sourceTable,
+                    borderColor: node.type === 'hub' ? '#2c5aa0' : node.type === 'link' ? '#43a047' : '#f57c00'
                 }
             });
         });
+        
+        // Add edges
+        if (model.edges) {
+            model.edges.forEach(edge => {
+                cy.add({
+                    group: 'edges',
+                    data: {
+                        source: edge.from,
+                        target: edge.to
+                    }
+                });
+            });
+        }
+        
+        // Apply layout
+        cy.layout({
+            name: 'cose',
+            animate: true,
+            animationDuration: 1000,
+            nodeRepulsion: 8000,
+            idealEdgeLength: 150,
+            edgeElasticity: 100,
+            padding: 50
+        }).run();
+        
+        // Fit to screen after layout
+        setTimeout(() => {
+            cy.fit(50);
+        }, 1200);
+    } catch (error) {
+        console.error('Visualization error:', error);
+        showStatus('generateStatus', `❌ Visualization failed: ${error.message}`, 'error');
     }
-    
-    // Apply layout
-    cy.layout({
-        name: 'cose',
-        animate: true,
-        animationDuration: 1000,
-        nodeRepulsion: 8000,
-        idealEdgeLength: 150,
-        edgeElasticity: 100,
-        padding: 50
-    }).run();
-    
-    // Fit to screen after layout
-    setTimeout(() => {
-        cy.fit(50);
-    }, 1200);
 }
 
 // Update statistics
