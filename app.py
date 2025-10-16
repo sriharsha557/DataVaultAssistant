@@ -27,17 +27,14 @@ def init_db():
     """Initialize DuckDB database with required tables"""
     conn = duckdb.connect(DB_PATH)
     
-    conn.execute("""
-        CREATE SEQUENCE IF NOT EXISTS seq_ocr START 1
-    """)
-    
-    conn.execute("""
-        CREATE SEQUENCE IF NOT EXISTS seq_model START 1
-    """)
-    
-    conn.execute("""
-        CREATE SEQUENCE IF NOT EXISTS seq_knowledge START 1
-    """)
+    # Drop old tables if they exist (for migration)
+    # Comment these out after first run if you want to keep existing data
+    # conn.execute("DROP TABLE IF EXISTS dv_models")
+    # conn.execute("DROP TABLE IF EXISTS ocr_results")
+    # conn.execute("DROP TABLE IF EXISTS knowledge_docs")
+    # conn.execute("DROP SEQUENCE IF EXISTS seq_ocr")
+    # conn.execute("DROP SEQUENCE IF EXISTS seq_model")
+    # conn.execute("DROP SEQUENCE IF EXISTS seq_knowledge")
     
     conn.execute("""
         CREATE TABLE IF NOT EXISTS ocr_results (
@@ -213,13 +210,14 @@ def upload_file():
         # Store in DuckDB
         conn = duckdb.connect(DB_PATH)
         
-        # Get next ID from sequence
-        ocr_id = conn.execute("SELECT nextval('seq_ocr')").fetchone()[0]
-        
+        # Insert and get the auto-generated ID
         conn.execute("""
-            INSERT INTO ocr_results (id, filename, extracted_text, created_at)
-            VALUES (?, ?, ?, ?)
-        """, [ocr_id, filename, extracted_text, datetime.now()])
+            INSERT INTO ocr_results (filename, extracted_text, created_at)
+            VALUES (?, ?, ?)
+        """, [filename, extracted_text, datetime.now()])
+        
+        # Get the last inserted ID
+        ocr_id = conn.execute("SELECT MAX(id) FROM ocr_results").fetchone()[0]
         
         conn.close()
         
@@ -271,14 +269,14 @@ def generate_model():
         # Generate model
         model = generate_dv_model(ocr_text, grounded, knowledge_content)
         
-        # Get next ID from sequence
-        model_id = conn.execute("SELECT nextval('seq_model')").fetchone()[0]
-        
-        # Store model
+        # Insert and get auto-generated ID
         conn.execute("""
-            INSERT INTO dv_models (id, ocr_id, model_json, grounded, created_at)
-            VALUES (?, ?, ?, ?, ?)
-        """, [model_id, ocr_id, json.dumps(model), grounded, datetime.now()])
+            INSERT INTO dv_models (ocr_id, model_json, grounded, created_at)
+            VALUES (?, ?, ?, ?)
+        """, [ocr_id, json.dumps(model), grounded, datetime.now()])
+        
+        # Get the last inserted ID
+        model_id = conn.execute("SELECT MAX(id) FROM dv_models").fetchone()[0]
         
         conn.close()
         
@@ -304,13 +302,11 @@ def upload_knowledge():
         
         conn = duckdb.connect(DB_PATH)
         
-        # Get next ID from sequence
-        knowledge_id = conn.execute("SELECT nextval('seq_knowledge')").fetchone()[0]
-        
+        # Insert and get auto-generated ID
         conn.execute("""
-            INSERT INTO knowledge_docs (id, name, content, uploaded_at)
-            VALUES (?, ?, ?, ?)
-        """, [knowledge_id, filename, content, datetime.now()])
+            INSERT INTO knowledge_docs (name, content, uploaded_at)
+            VALUES (?, ?, ?)
+        """, [filename, content, datetime.now()])
         
         conn.close()
         
