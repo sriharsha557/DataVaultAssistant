@@ -92,28 +92,41 @@ def extract_text_ocr(filepath):
     if not OCR_API_KEY:
         raise ValueError("OCR_SPACE_KEY not configured")
     
-    with open(filepath, 'rb') as f:
-        response = requests.post(
-            'https://api.ocr.space/parse/image',
-            files={'file': f},
-            data={
-                'apikey': OCR_API_KEY,
-                'language': 'eng',
-                'isOverlayRequired': 'false',
-                'detectOrientation': 'true',
-                'scale': 'true',
-                'OCREngine': '2'
-            },
-            timeout=60
-        )
+    try:
+        with open(filepath, 'rb') as f:
+            response = requests.post(
+                'https://api.ocr.space/parse/image',
+                files={'file': f},
+                data={
+                    'apikey': OCR_API_KEY,
+                    'language': 'eng',
+                    'isOverlayRequired': 'false',
+                    'detectOrientation': 'true',
+                    'scale': 'true',
+                    'OCREngine': '2'
+                },
+                timeout=60
+            )
+        
+        response.raise_for_status()  # Raise exception for HTTP errors
+        result = response.json()
+        
+        if result.get('IsErroredOnProcessing'):
+            raise Exception(result.get('ErrorMessage', 'OCR processing failed'))
+        
+        if not result.get('ParsedResults') or len(result['ParsedResults']) == 0:
+            raise Exception('No OCR results returned')
+        
+        parsed_text = result['ParsedResults'][0].get('ParsedText', '')
+        if not parsed_text:
+            raise Exception('OCR extracted empty text - try a clearer image')
+        
+        return parsed_text
     
-    result = response.json()
-    
-    if result.get('IsErroredOnProcessing'):
-        raise Exception(result.get('ErrorMessage', 'OCR processing failed'))
-    
-    parsed_text = result['ParsedResults'][0]['ParsedText']
-    return parsed_text
+    except requests.exceptions.RequestException as e:
+        raise Exception(f"OCR API request failed: {str(e)}")
+    except Exception as e:
+        raise Exception(f"OCR extraction error: {str(e)}")
 
 def generate_dv_model(ocr_text, grounded=False, knowledge_content=''):
     """Generate Data Vault 2.1 model using GROQ API"""
@@ -161,36 +174,54 @@ Return ONLY valid JSON (no markdown formatting) in this exact structure:
   ]
 }}"""
     
-    response = requests.post(
-        'https://api.groq.com/openai/v1/chat/completions',
-        headers={
-            'Authorization': f'Bearer {GROQ_API_KEY}',
-            'Content-Type': 'application/json'
-        },
-        json={
-            'model': 'llama-3.3-70b-versatile',
-            'messages': [
-                {'role': 'system', 'content': system_prompt},
-                {'role': 'user', 'content': user_prompt}
-            ],
-            'temperature': 0.2,
-            'max_tokens': 4000
-        },
-        timeout=60
-    )
+    try:
+        response = requests.post(
+            'https://api.groq.com/openai/v1/chat/completions',
+            headers={
+                'Authorization': f'Bearer {GROQ_API_KEY}',
+                'Content-Type': 'application/json'
+            },
+            json={
+                'model': 'llama-3.3-70b-versatile',
+                'messages': [
+                    {'role': 'system', 'content': system_prompt},
+                    {'role': 'user', 'content': user_prompt}
+                ],
+                'temperature': 0.2,
+                'max_tokens': 4000
+            },
+            timeout=60
+        )
+        
+        response.raise_for_status()
+        result = response.json()
+        
+        if 'error' in result:
+            error_msg = result['error'].get('message', 'Unknown GROQ error')
+            raise Exception(f"GROQ API error: {error_msg}")
+        
+        if not result.get('choices') or len(result['choices']) == 0:
+            raise Exception('No response from GROQ API')
+        
+        content = result['choices'][0]['message']['content'].strip()
+        
+        # Clean markdown formatting if present
+        content = content.replace('```json', '').replace('```', '').strip()
+        
+        model = json.loads(content)
+        
+        # Validate model structure
+        if not isinstance(model, dict) or 'nodes' not in model:
+            raise Exception('Invalid model structure - missing "nodes" field')
+        
+        return model
     
-    result = response.json()
-    
-    if 'error' in result:
-        raise Exception(result['error'].get('message', 'GROQ API error'))
-    
-    content = result['choices'][0]['message']['content'].strip()
-    
-    # Clean markdown formatting if present
-    content = content.replace('```json', '').replace('```', '').strip()
-    
-    model = json.loads(content)
-    return model
+    except requests.exceptions.RequestException as e:
+        raise Exception(f"GROQ API request failed: {str(e)}")
+    except json.JSONDecodeError as e:
+        raise Exception(f"Failed to parse GROQ response as JSON: {str(e)}")
+    except Exception as e:
+        raise Exception(f"Model generation error: {str(e)}")
 
 @app.route('/')
 def index():
@@ -216,7 +247,7 @@ def upload_file():
         return jsonify({'error': 'No file selected'}), 400
     
     if not allowed_file(file.filename):
-        return jsonify({'error': 'Invalid file type'}), 400
+        return jsonify({'error': 'Invalid file type. Allowed: PNG, JPG, JPEG, PDF, GIF'}), 400
     
     filepath = None
     conn = None
@@ -243,18 +274,25 @@ def upload_file():
         
         conn.commit()
         
+        preview = extracted_text[:500] + '...' if len(extracted_text) > 500 else extracted_text
+        
         return jsonify({
             'success': True,
             'ocr_id': ocr_id,
-            'extracted_text': extracted_text[:500] + '...' if len(extracted_text) > 500 else extracted_text
-        })
+            'extracted_text': preview
+        }), 200
     
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        error_msg = str(e)
+        print(f"❌ Upload error: {error_msg}")
+        return jsonify({'error': error_msg}), 500
     
     finally:
         if conn:
-            conn.close()
+            try:
+                conn.close()
+            except:
+                pass
         if filepath and os.path.exists(filepath):
             try:
                 os.remove(filepath)
@@ -264,59 +302,69 @@ def upload_file():
 @app.route('/api/generate', methods=['POST'])
 def generate_model():
     """Generate Data Vault model from OCR text"""
-    data = request.json
-    ocr_id = data.get('ocr_id')
-    grounded = data.get('grounded', False)
-    
-    if not ocr_id:
-        return jsonify({'error': 'OCR ID required'}), 400
-    
-    conn = None
-    
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No JSON data provided'}), 400
         
-        # Get OCR text
-        cursor.execute("SELECT extracted_text FROM ocr_results WHERE id = ?", (ocr_id,))
-        result = cursor.fetchone()
+        ocr_id = data.get('ocr_id')
+        grounded = data.get('grounded', False)
         
-        if not result:
-            return jsonify({'error': 'OCR result not found'}), 404
+        if not ocr_id:
+            return jsonify({'error': 'OCR ID required'}), 400
         
-        ocr_text = result[0]
+        conn = None
         
-        # Get knowledge doc if grounded mode
-        knowledge_content = ''
-        if grounded:
-            cursor.execute("SELECT content FROM knowledge_docs ORDER BY uploaded_at DESC LIMIT 1")
-            knowledge = cursor.fetchone()
-            if knowledge:
-                knowledge_content = knowledge[0]
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            
+            # Get OCR text
+            cursor.execute("SELECT extracted_text FROM ocr_results WHERE id = ?", (ocr_id,))
+            result = cursor.fetchone()
+            
+            if not result:
+                return jsonify({'error': 'OCR result not found'}), 404
+            
+            ocr_text = result[0]
+            
+            # Get knowledge doc if grounded mode
+            knowledge_content = ''
+            if grounded:
+                cursor.execute("SELECT content FROM knowledge_docs ORDER BY uploaded_at DESC LIMIT 1")
+                knowledge = cursor.fetchone()
+                if knowledge:
+                    knowledge_content = knowledge[0]
+            
+            # Generate model
+            model = generate_dv_model(ocr_text, grounded, knowledge_content)
+            
+            # Insert model
+            cursor.execute("""
+                INSERT INTO dv_models (ocr_id, model_json, grounded, created_at)
+                VALUES (?, ?, ?, ?)
+            """, (ocr_id, json.dumps(model), 1 if grounded else 0, datetime.now().isoformat()))
+            
+            model_id = cursor.lastrowid
+            conn.commit()
+            
+            return jsonify({
+                'success': True,
+                'model_id': model_id,
+                'model': model
+            }), 200
         
-        # Generate model
-        model = generate_dv_model(ocr_text, grounded, knowledge_content)
-        
-        # Insert model
-        cursor.execute("""
-            INSERT INTO dv_models (ocr_id, model_json, grounded, created_at)
-            VALUES (?, ?, ?, ?)
-        """, (ocr_id, json.dumps(model), 1 if grounded else 0, datetime.now().isoformat()))
-        
-        model_id = cursor.lastrowid
-        conn.commit()
-        
-        return jsonify({
-            'success': True,
-            'model': model
-        })
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except:
+                    pass
     
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
-    
-    finally:
-        if conn:
-            conn.close()
+        error_msg = str(e)
+        print(f"❌ Generate error: {error_msg}")
+        return jsonify({'error': error_msg}), 500
 
 @app.route('/api/knowledge/upload', methods=['POST'])
 def upload_knowledge():
@@ -329,7 +377,7 @@ def upload_knowledge():
     
     try:
         filename = secure_filename(file.filename)
-        content = file.read().decode('utf-8')
+        content = file.read().decode('utf-8', errors='replace')
         
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -341,14 +389,19 @@ def upload_knowledge():
         
         conn.commit()
         
-        return jsonify({'success': True, 'message': 'Knowledge document uploaded'})
+        return jsonify({'success': True, 'message': 'Knowledge document uploaded'}), 200
     
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        error_msg = str(e)
+        print(f"❌ Knowledge upload error: {error_msg}")
+        return jsonify({'error': error_msg}), 500
     
     finally:
         if conn:
-            conn.close()
+            try:
+                conn.close()
+            except:
+                pass
 
 @app.route('/api/models', methods=['GET'])
 def get_models():
@@ -376,14 +429,19 @@ def get_models():
             'created_at': str(r[4])
         } for r in results]
         
-        return jsonify({'models': models})
+        return jsonify({'models': models}), 200
     
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        error_msg = str(e)
+        print(f"❌ Get models error: {error_msg}")
+        return jsonify({'error': error_msg}), 500
     
     finally:
         if conn:
-            conn.close()
+            try:
+                conn.close()
+            except:
+                pass
 
 @app.route('/api/models/<int:model_id>', methods=['GET'])
 def get_model(model_id):
@@ -403,14 +461,19 @@ def get_model(model_id):
         return jsonify({
             'success': True,
             'model': json.loads(result[0])
-        })
+        }), 200
     
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        error_msg = str(e)
+        print(f"❌ Get model error: {error_msg}")
+        return jsonify({'error': error_msg}), 500
     
     finally:
         if conn:
-            conn.close()
+            try:
+                conn.close()
+            except:
+                pass
 
 if __name__ == '__main__':
     init_db()
