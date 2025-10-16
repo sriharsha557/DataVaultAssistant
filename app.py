@@ -20,22 +20,16 @@ TURSO_URL = os.getenv('TURSO_DATABASE_URL', '')
 TURSO_TOKEN = os.getenv('TURSO_AUTH_TOKEN', '')
 
 def get_db_connection():
-    """Get database connection - Turso or local SQLite"""
-    if TURSO_URL and TURSO_TOKEN:
-        # Use Turso (libSQL) for production
-        try:
-            import libsql_experimental as libsql
-            return libsql.connect(database=TURSO_URL, auth_token=TURSO_TOKEN)
-        except ImportError:
-            print("⚠️ libsql_experimental not installed, falling back to local SQLite")
-            import sqlite3
-            os.makedirs('db', exist_ok=True)
-            return sqlite3.connect('db/datavault.db')
-    else:
-        # Use local SQLite for development
-        import sqlite3
+    """Get database connection - SQLite only"""
+    import sqlite3
+    try:
         os.makedirs('db', exist_ok=True)
-        return sqlite3.connect('db/datavault.db')
+        conn = sqlite3.connect('db/datavault.db')
+        conn.row_factory = sqlite3.Row
+        return conn
+    except Exception as e:
+        print(f"❌ Database connection error: {e}", flush=True)
+        raise
 
 def init_db():
     """Initialize database with required tables"""
@@ -43,12 +37,12 @@ def init_db():
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Create tables with auto-increment IDs
+        # Create tables
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS ocr_results (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                filename TEXT,
-                extracted_text TEXT,
+                filename TEXT NOT NULL,
+                extracted_text TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -56,8 +50,8 @@ def init_db():
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS dv_models (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                ocr_id INTEGER,
-                model_json TEXT,
+                ocr_id INTEGER NOT NULL,
+                model_json TEXT NOT NULL,
                 grounded INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (ocr_id) REFERENCES ocr_results(id)
@@ -67,21 +61,17 @@ def init_db():
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS knowledge_docs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT,
-                content TEXT,
+                name TEXT NOT NULL,
+                content TEXT NOT NULL,
                 uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         
         conn.commit()
         conn.close()
-        
-        if TURSO_URL and TURSO_TOKEN:
-            print("✅ Database initialized on Turso (persistent)")
-        else:
-            print("✅ Database initialized locally (ephemeral)")
+        print("✅ Database ready", flush=True)
     except Exception as e:
-        print(f"❌ Database initialization error: {e}")
+        print(f"❌ Database initialization error: {e}", flush=True)
         raise
 
 def allowed_file(filename):
@@ -105,7 +95,7 @@ def extract_text_ocr(filepath):
                     'scale': 'true',
                     'OCREngine': '2'
                 },
-                timeout=60
+                timeout=120
             )
         
         response.raise_for_status()  # Raise exception for HTTP errors
@@ -123,6 +113,8 @@ def extract_text_ocr(filepath):
         
         return parsed_text
     
+    except requests.exceptions.Timeout:
+        raise Exception("OCR API request timed out - try a smaller image")
     except requests.exceptions.RequestException as e:
         raise Exception(f"OCR API request failed: {str(e)}")
     except Exception as e:
@@ -238,79 +230,112 @@ def check_config():
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
     """Handle file upload and OCR extraction"""
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file uploaded'}), 400
-    
-    file = request.files['file']
-    
-    if file.filename == '':
-        return jsonify({'error': 'No file selected'}), 400
-    
-    if not allowed_file(file.filename):
-        return jsonify({'error': 'Invalid file type. Allowed: PNG, JPG, JPEG, PDF, GIF'}), 400
-    
-    filepath = None
-    conn = None
+    print("📤 Upload request received", flush=True)
     
     try:
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
+        if 'file' not in request.files:
+            print("❌ No file in request", flush=True)
+            return jsonify({'error': 'No file uploaded'}), 400
         
-        # Extract text via OCR
-        extracted_text = extract_text_ocr(filepath)
+        file = request.files['file']
+        print(f"📄 File received: {file.filename}", flush=True)
         
-        # Store in database
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        if file.filename == '':
+            print("❌ Empty filename", flush=True)
+            return jsonify({'error': 'No file selected'}), 400
         
-        cursor.execute("""
-            INSERT INTO ocr_results (filename, extracted_text, created_at)
-            VALUES (?, ?, ?)
-        """, (filename, extracted_text, datetime.now().isoformat()))
+        if not allowed_file(file.filename):
+            print(f"❌ File type not allowed: {file.filename}", flush=True)
+            return jsonify({'error': 'Invalid file type. Allowed: PNG, JPG, JPEG, PDF, GIF'}), 400
         
-        # Get the last inserted ID
-        ocr_id = cursor.lastrowid
+        filepath = None
+        conn = None
         
-        conn.commit()
+        try:
+            filename = secure_filename(file.filename)
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            print(f"💾 Saving to: {filepath}", flush=True)
+            file.save(filepath)
+            print(f"✅ File saved", flush=True)
+            
+            # Extract text via OCR
+            print(f"🔍 Starting OCR extraction...", flush=True)
+            extracted_text = extract_text_ocr(filepath)
+            print(f"✅ OCR complete. Text length: {len(extracted_text)}", flush=True)
+            
+            # Store in database
+            print(f"💾 Storing in database...", flush=True)
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                INSERT INTO ocr_results (filename, extracted_text, created_at)
+                VALUES (?, ?, ?)
+            """, (filename, extracted_text, datetime.now().isoformat()))
+            
+            ocr_id = cursor.lastrowid
+            print(f"✅ Stored with OCR ID: {ocr_id}", flush=True)
+            
+            conn.commit()
+            print(f"✅ Committed to database", flush=True)
+            
+            preview = extracted_text[:500] + '...' if len(extracted_text) > 500 else extracted_text
+            
+            response = {
+                'success': True,
+                'ocr_id': ocr_id,
+                'extracted_text': preview
+            }
+            print(f"✅ Sending response: {response}", flush=True)
+            return jsonify(response), 200
         
-        preview = extracted_text[:500] + '...' if len(extracted_text) > 500 else extracted_text
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ Upload processing error: {error_msg}", flush=True)
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': error_msg}), 500
         
-        return jsonify({
-            'success': True,
-            'ocr_id': ocr_id,
-            'extracted_text': preview
-        }), 200
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                    print("✅ Database connection closed", flush=True)
+                except Exception as e:
+                    print(f"⚠️ Error closing connection: {e}", flush=True)
+            if filepath and os.path.exists(filepath):
+                try:
+                    os.remove(filepath)
+                    print(f"✅ Temp file deleted", flush=True)
+                except Exception as e:
+                    print(f"⚠️ Error deleting temp file: {e}", flush=True)
     
     except Exception as e:
         error_msg = str(e)
-        print(f"❌ Upload error: {error_msg}")
-        return jsonify({'error': error_msg}), 500
-    
-    finally:
-        if conn:
-            try:
-                conn.close()
-            except:
-                pass
-        if filepath and os.path.exists(filepath):
-            try:
-                os.remove(filepath)
-            except:
-                pass
+        print(f"❌ Outer exception in upload: {error_msg}", flush=True)
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Request processing error: {error_msg}'}), 500
 
 @app.route('/api/generate', methods=['POST'])
 def generate_model():
     """Generate Data Vault model from OCR text"""
+    print("🧠 Generate request received", flush=True)
+    
     try:
         data = request.get_json()
+        print(f"📦 Request data: {data}", flush=True)
+        
         if not data:
+            print("❌ No JSON data provided", flush=True)
             return jsonify({'error': 'No JSON data provided'}), 400
         
         ocr_id = data.get('ocr_id')
         grounded = data.get('grounded', False)
+        print(f"🔍 OCR ID: {ocr_id}, Grounded: {grounded}", flush=True)
         
         if not ocr_id:
+            print("❌ OCR ID missing", flush=True)
             return jsonify({'error': 'OCR ID required'}), 400
         
         conn = None
@@ -320,26 +345,36 @@ def generate_model():
             cursor = conn.cursor()
             
             # Get OCR text
+            print(f"📖 Fetching OCR result {ocr_id}...", flush=True)
             cursor.execute("SELECT extracted_text FROM ocr_results WHERE id = ?", (ocr_id,))
             result = cursor.fetchone()
             
             if not result:
+                print(f"❌ OCR result {ocr_id} not found", flush=True)
                 return jsonify({'error': 'OCR result not found'}), 404
             
             ocr_text = result[0]
+            print(f"✅ OCR text loaded, length: {len(ocr_text)}", flush=True)
             
             # Get knowledge doc if grounded mode
             knowledge_content = ''
             if grounded:
+                print(f"📚 Fetching knowledge doc...", flush=True)
                 cursor.execute("SELECT content FROM knowledge_docs ORDER BY uploaded_at DESC LIMIT 1")
                 knowledge = cursor.fetchone()
                 if knowledge:
                     knowledge_content = knowledge[0]
+                    print(f"✅ Knowledge doc loaded, length: {len(knowledge_content)}", flush=True)
+                else:
+                    print(f"⚠️ No knowledge doc found", flush=True)
             
             # Generate model
+            print(f"🤖 Calling GROQ API...", flush=True)
             model = generate_dv_model(ocr_text, grounded, knowledge_content)
+            print(f"✅ Model generated with {len(model.get('nodes', []))} nodes", flush=True)
             
             # Insert model
+            print(f"💾 Storing model...", flush=True)
             cursor.execute("""
                 INSERT INTO dv_models (ocr_id, model_json, grounded, created_at)
                 VALUES (?, ?, ?, ?)
@@ -347,24 +382,36 @@ def generate_model():
             
             model_id = cursor.lastrowid
             conn.commit()
+            print(f"✅ Model stored with ID: {model_id}", flush=True)
             
-            return jsonify({
+            response = {
                 'success': True,
                 'model_id': model_id,
                 'model': model
-            }), 200
+            }
+            print(f"✅ Sending response", flush=True)
+            return jsonify(response), 200
+        
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ Generation error: {error_msg}", flush=True)
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': error_msg}), 500
         
         finally:
             if conn:
                 try:
                     conn.close()
-                except:
-                    pass
+                except Exception as e:
+                    print(f"⚠️ Error closing connection: {e}", flush=True)
     
     except Exception as e:
         error_msg = str(e)
-        print(f"❌ Generate error: {error_msg}")
-        return jsonify({'error': error_msg}), 500
+        print(f"❌ Outer exception in generate: {error_msg}", flush=True)
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Request processing error: {error_msg}'}), 500
 
 @app.route('/api/knowledge/upload', methods=['POST'])
 def upload_knowledge():
@@ -475,9 +522,34 @@ def get_model(model_id):
             except:
                 pass
 
+@app.errorhandler(Exception)
+def handle_error(error):
+    """Global error handler"""
+    print(f"❌ Unhandled error: {str(error)}", flush=True)
+    import traceback
+    traceback.print_exc()
+    return jsonify({'error': 'Internal server error'}), 500
+
 if __name__ == '__main__':
-    init_db()
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    try:
+        print("🚀 Initializing database...", flush=True)
+        init_db()
+        print("✅ Database initialized", flush=True)
+        print(f"🔍 OCR configured: {bool(OCR_API_KEY)}", flush=True)
+        print(f"🔍 GROQ configured: {bool(GROQ_API_KEY)}", flush=True)
+        app.run(debug=True, host='0.0.0.0', port=5000)
+    except Exception as e:
+        print(f"❌ Startup error: {str(e)}", flush=True)
+        import traceback
+        traceback.print_exc()
+        raise
 else:
     # When running with gunicorn (on Render)
-    init_db()
+    try:
+        print("🚀 Initializing database (gunicorn)...", flush=True)
+        init_db()
+        print("✅ Database initialized (gunicorn)", flush=True)
+    except Exception as e:
+        print(f"❌ Database init error (gunicorn): {str(e)}", flush=True)
+        import traceback
+        traceback.print_exc()
