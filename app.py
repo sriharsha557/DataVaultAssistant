@@ -1,74 +1,85 @@
 import os
 import json
-import duckdb
 from flask import Flask, request, jsonify, render_template
 from werkzeug.utils import secure_filename
 import requests
 from datetime import datetime
 
 app = Flask(__name__)
-
-# Configure paths for Render deployment
-if os.getenv('RENDER'):
-    # Render uses /opt/render/project/src as the base path
-    BASE_PATH = '/opt/render/project/src'
-    app.config['UPLOAD_FOLDER'] = os.path.join(BASE_PATH, 'uploads')
-    DB_PATH = os.path.join(BASE_PATH, 'db', 'datavault.duckdb')
-else:
-    # Local development
-    app.config['UPLOAD_FOLDER'] = 'uploads'
-    DB_PATH = 'db/datavault.duckdb'
-
+app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 app.config['ALLOWED_EXTENSIONS'] = {'png', 'jpg', 'jpeg', 'pdf', 'gif'}
 
-# Ensure directories exist
+# Ensure upload folder exists
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-if not os.getenv('RENDER'):
-    os.makedirs('knowledge', exist_ok=True)
 
 # Environment variables
 OCR_API_KEY = os.getenv('OCR_SPACE_KEY', '')
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
+TURSO_URL = os.getenv('TURSO_DATABASE_URL', '')
+TURSO_TOKEN = os.getenv('TURSO_AUTH_TOKEN', '')
+
+def get_db_connection():
+    """Get database connection - Turso or local SQLite"""
+    if TURSO_URL and TURSO_TOKEN:
+        # Use Turso (libSQL) for production
+        try:
+            import libsql_experimental as libsql
+            return libsql.connect(database=TURSO_URL, auth_token=TURSO_TOKEN)
+        except ImportError:
+            print("⚠️ libsql_experimental not installed, falling back to local SQLite")
+            import sqlite3
+            os.makedirs('db', exist_ok=True)
+            return sqlite3.connect('db/datavault.db')
+    else:
+        # Use local SQLite for development
+        import sqlite3
+        os.makedirs('db', exist_ok=True)
+        return sqlite3.connect('db/datavault.db')
 
 def init_db():
-    """Initialize DuckDB database with required tables"""
+    """Initialize database with required tables"""
     try:
-        conn = duckdb.connect(DB_PATH)
+        conn = get_db_connection()
+        cursor = conn.cursor()
         
         # Create tables with auto-increment IDs
-        conn.execute("""
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS ocr_results (
-                id INTEGER PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 filename TEXT,
                 extracted_text TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         
-        conn.execute("""
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS dv_models (
-                id INTEGER PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ocr_id INTEGER,
                 model_json TEXT,
-                grounded BOOLEAN DEFAULT FALSE,
+                grounded INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (ocr_id) REFERENCES ocr_results(id)
             )
         """)
         
-        conn.execute("""
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS knowledge_docs (
-                id INTEGER PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT,
                 content TEXT,
                 uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         
+        conn.commit()
         conn.close()
-        print(f"✅ Database initialized at {DB_PATH}")
+        
+        if TURSO_URL and TURSO_TOKEN:
+            print("✅ Database initialized on Turso (persistent)")
+        else:
+            print("✅ Database initialized locally (ephemeral)")
     except Exception as e:
         print(f"❌ Database initialization error: {e}")
         raise
@@ -218,17 +229,19 @@ def upload_file():
         # Extract text via OCR
         extracted_text = extract_text_ocr(filepath)
         
-        # Store in DuckDB
-        conn = duckdb.connect(DB_PATH)
+        # Store in database
+        conn = get_db_connection()
+        cursor = conn.cursor()
         
-        # Insert and get the auto-generated ID
-        conn.execute("""
+        cursor.execute("""
             INSERT INTO ocr_results (filename, extracted_text, created_at)
             VALUES (?, ?, ?)
-        """, [filename, extracted_text, datetime.now()])
+        """, [filename, extracted_text, datetime.now().isoformat()])
         
         # Get the last inserted ID
-        ocr_id = conn.execute("SELECT MAX(id) FROM ocr_results").fetchone()[0]
+        ocr_id = cursor.lastrowid
+        
+        conn.commit()
         
         return jsonify({
             'success': True,
@@ -240,7 +253,6 @@ def upload_file():
         return jsonify({'error': str(e)}), 500
     
     finally:
-        # Clean up
         if conn:
             conn.close()
         if filepath and os.path.exists(filepath):
@@ -262,13 +274,12 @@ def generate_model():
     conn = None
     
     try:
-        conn = duckdb.connect(DB_PATH)
+        conn = get_db_connection()
+        cursor = conn.cursor()
         
         # Get OCR text
-        result = conn.execute(
-            "SELECT extracted_text FROM ocr_results WHERE id = ?",
-            [ocr_id]
-        ).fetchone()
+        cursor.execute("SELECT extracted_text FROM ocr_results WHERE id = ?", [ocr_id])
+        result = cursor.fetchone()
         
         if not result:
             return jsonify({'error': 'OCR result not found'}), 404
@@ -278,23 +289,22 @@ def generate_model():
         # Get knowledge doc if grounded mode
         knowledge_content = ''
         if grounded:
-            knowledge = conn.execute(
-                "SELECT content FROM knowledge_docs ORDER BY uploaded_at DESC LIMIT 1"
-            ).fetchone()
+            cursor.execute("SELECT content FROM knowledge_docs ORDER BY uploaded_at DESC LIMIT 1")
+            knowledge = cursor.fetchone()
             if knowledge:
                 knowledge_content = knowledge[0]
         
         # Generate model
         model = generate_dv_model(ocr_text, grounded, knowledge_content)
         
-        # Insert and get auto-generated ID
-        conn.execute("""
+        # Insert model
+        cursor.execute("""
             INSERT INTO dv_models (ocr_id, model_json, grounded, created_at)
             VALUES (?, ?, ?, ?)
-        """, [ocr_id, json.dumps(model), grounded, datetime.now()])
+        """, [ocr_id, json.dumps(model), 1 if grounded else 0, datetime.now().isoformat()])
         
-        # Get the last inserted ID
-        model_id = conn.execute("SELECT MAX(id) FROM dv_models").fetchone()[0]
+        model_id = cursor.lastrowid
+        conn.commit()
         
         return jsonify({
             'success': True,
@@ -321,13 +331,15 @@ def upload_knowledge():
         filename = secure_filename(file.filename)
         content = file.read().decode('utf-8')
         
-        conn = duckdb.connect(DB_PATH)
+        conn = get_db_connection()
+        cursor = conn.cursor()
         
-        # Insert and get auto-generated ID
-        conn.execute("""
+        cursor.execute("""
             INSERT INTO knowledge_docs (name, content, uploaded_at)
             VALUES (?, ?, ?)
-        """, [filename, content, datetime.now()])
+        """, [filename, content, datetime.now().isoformat()])
+        
+        conn.commit()
         
         return jsonify({'success': True, 'message': 'Knowledge document uploaded'})
     
@@ -344,19 +356,23 @@ def get_models():
     conn = None
     
     try:
-        conn = duckdb.connect(DB_PATH)
-        results = conn.execute("""
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
             SELECT m.id, m.ocr_id, o.filename, m.grounded, m.created_at
             FROM dv_models m
             JOIN ocr_results o ON m.ocr_id = o.id
             ORDER BY m.created_at DESC
-        """).fetchall()
+        """)
+        
+        results = cursor.fetchall()
         
         models = [{
             'id': r[0],
             'ocr_id': r[1],
             'filename': r[2],
-            'grounded': r[3],
+            'grounded': bool(r[3]),
             'created_at': str(r[4])
         } for r in results]
         
@@ -375,11 +391,11 @@ def get_model(model_id):
     conn = None
     
     try:
-        conn = duckdb.connect(DB_PATH)
-        result = conn.execute(
-            "SELECT model_json FROM dv_models WHERE id = ?",
-            [model_id]
-        ).fetchone()
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT model_json FROM dv_models WHERE id = ?", [model_id])
+        result = cursor.fetchone()
         
         if not result:
             return jsonify({'error': 'Model not found'}), 404
@@ -400,5 +416,5 @@ if __name__ == '__main__':
     init_db()
     app.run(debug=True, host='0.0.0.0', port=5000)
 else:
-    # When running with gunicorn on Render
+    # When running with gunicorn (on Render)
     init_db()
