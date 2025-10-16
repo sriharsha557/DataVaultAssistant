@@ -283,52 +283,116 @@ function visualizeModel(model) {
     }
     
     try {
-        // Add nodes
+        // Validate and sanitize nodes
+        const nodeIds = new Set();
+        const validNodes = [];
+        
         model.nodes.forEach(node => {
+            if (!node.id) {
+                console.warn('Node missing ID:', node);
+                return;
+            }
+            
+            const sanitizedId = String(node.id).trim();
+            if (nodeIds.has(sanitizedId)) {
+                console.warn('Duplicate node ID:', sanitizedId);
+                return;
+            }
+            
+            nodeIds.add(sanitizedId);
+            validNodes.push({
+                ...node,
+                id: sanitizedId
+            });
+        });
+        
+        console.log(`Adding ${validNodes.length} nodes to visualization`);
+        
+        // Add nodes
+        validNodes.forEach(node => {
             cy.add({
                 group: 'nodes',
                 data: {
                     id: node.id,
                     label: node.id.replace(/^(Hub_|Link_|Sat_)/, ''),
-                    type: node.type,
-                    businessKey: node.businessKey,
-                    parent: node.parent,
-                    connects: node.connects,
-                    attributes: node.attributes,
-                    sourceTable: node.sourceTable,
+                    type: node.type || 'hub',
+                    businessKey: node.businessKey || '',
+                    parent: node.parent || '',
+                    connects: node.connects || [],
+                    attributes: node.attributes || [],
+                    sourceTable: node.sourceTable || '',
                     borderColor: node.type === 'hub' ? '#2c5aa0' : node.type === 'link' ? '#43a047' : '#f57c00'
                 }
             });
         });
         
-        // Add edges
-        if (model.edges) {
-            model.edges.forEach(edge => {
-                cy.add({
-                    group: 'edges',
-                    data: {
-                        source: edge.from,
-                        target: edge.to
-                    }
-                });
+        // Add edges with validation
+        let validEdges = 0;
+        let invalidEdges = 0;
+        
+        if (model.edges && Array.isArray(model.edges)) {
+            model.edges.forEach((edge, idx) => {
+                const sourceId = String(edge.from || edge.source).trim();
+                const targetId = String(edge.to || edge.target).trim();
+                
+                if (!sourceId || !targetId) {
+                    console.warn(`Edge ${idx}: missing source or target`, edge);
+                    invalidEdges++;
+                    return;
+                }
+                
+                if (!nodeIds.has(sourceId)) {
+                    console.warn(`Edge ${idx}: source node "${sourceId}" not found`);
+                    invalidEdges++;
+                    return;
+                }
+                
+                if (!nodeIds.has(targetId)) {
+                    console.warn(`Edge ${idx}: target node "${targetId}" not found`);
+                    invalidEdges++;
+                    return;
+                }
+                
+                try {
+                    cy.add({
+                        group: 'edges',
+                        data: {
+                            id: `edge-${sourceId}-${targetId}`,
+                            source: sourceId,
+                            target: targetId
+                        }
+                    });
+                    validEdges++;
+                } catch (e) {
+                    console.warn(`Failed to add edge:`, e);
+                    invalidEdges++;
+                }
             });
         }
         
-        // Apply layout
-        cy.layout({
+        console.log(`Added ${validEdges} edges (${invalidEdges} invalid)`);
+        
+        // Apply layout with better spacing
+        const layout = cy.layout({
             name: 'cose',
             animate: true,
             animationDuration: 1000,
-            nodeRepulsion: 8000,
-            idealEdgeLength: 150,
-            edgeElasticity: 100,
-            padding: 50
-        }).run();
+            nodeRepulsion: 12000,
+            idealEdgeLength: 200,
+            edgeElasticity: 0.8,
+            padding: 100,
+            randomize: true
+        });
+        
+        layout.run();
         
         // Fit to screen after layout
         setTimeout(() => {
             cy.fit(50);
+            console.log('Layout complete and fitted to screen');
         }, 1200);
+        
+        showStatus('generateStatus', `✅ Visualization complete: ${validNodes.length} nodes, ${validEdges} edges`, 'success');
     } catch (error) {
         console.error('Visualization error:', error);
         showStatus('generateStatus', `❌ Visualization failed: ${error.message}`, 'error');
