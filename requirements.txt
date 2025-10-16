@@ -3,4 +3,4 @@ requests==2.31.0
 Werkzeug==3.0.1
 python-dotenv==1.0.0
 gunicorn==21.2.0
-libsql-experimental==0.10.3
+libsql-experimental==0.0.55
