@@ -7,65 +7,71 @@ import requests
 from datetime import datetime
 
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = 'uploads'
+
+# Configure paths for Render deployment
+if os.getenv('RENDER'):
+    # Render uses /opt/render/project/src as the base path
+    BASE_PATH = '/opt/render/project/src'
+    app.config['UPLOAD_FOLDER'] = os.path.join(BASE_PATH, 'uploads')
+    DB_PATH = os.path.join(BASE_PATH, 'db', 'datavault.duckdb')
+else:
+    # Local development
+    app.config['UPLOAD_FOLDER'] = 'uploads'
+    DB_PATH = 'db/datavault.duckdb'
+
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 app.config['ALLOWED_EXTENSIONS'] = {'png', 'jpg', 'jpeg', 'pdf', 'gif'}
 
-# Ensure upload folder exists
+# Ensure directories exist
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-os.makedirs('db', exist_ok=True)
-os.makedirs('knowledge', exist_ok=True)
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+if not os.getenv('RENDER'):
+    os.makedirs('knowledge', exist_ok=True)
 
 # Environment variables
 OCR_API_KEY = os.getenv('OCR_SPACE_KEY', '')
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
 
-# DuckDB connection
-DB_PATH = 'db/datavault.duckdb'
-
 def init_db():
     """Initialize DuckDB database with required tables"""
-    conn = duckdb.connect(DB_PATH)
-    
-    # Drop old tables if they exist (for migration)
-    # Comment these out after first run if you want to keep existing data
-    # conn.execute("DROP TABLE IF EXISTS dv_models")
-    # conn.execute("DROP TABLE IF EXISTS ocr_results")
-    # conn.execute("DROP TABLE IF EXISTS knowledge_docs")
-    # conn.execute("DROP SEQUENCE IF EXISTS seq_ocr")
-    # conn.execute("DROP SEQUENCE IF EXISTS seq_model")
-    # conn.execute("DROP SEQUENCE IF EXISTS seq_knowledge")
-    
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS ocr_results (
-            id INTEGER PRIMARY KEY,
-            filename TEXT,
-            extracted_text TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS dv_models (
-            id INTEGER PRIMARY KEY,
-            ocr_id INTEGER,
-            model_json TEXT,
-            grounded BOOLEAN DEFAULT FALSE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (ocr_id) REFERENCES ocr_results(id)
-        )
-    """)
-    
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS knowledge_docs (
-            id INTEGER PRIMARY KEY,
-            name TEXT,
-            content TEXT,
-            uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    
-    conn.close()
+    try:
+        conn = duckdb.connect(DB_PATH)
+        
+        # Create tables with auto-increment IDs
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS ocr_results (
+                id INTEGER PRIMARY KEY,
+                filename TEXT,
+                extracted_text TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS dv_models (
+                id INTEGER PRIMARY KEY,
+                ocr_id INTEGER,
+                model_json TEXT,
+                grounded BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (ocr_id) REFERENCES ocr_results(id)
+            )
+        """)
+        
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS knowledge_docs (
+                id INTEGER PRIMARY KEY,
+                name TEXT,
+                content TEXT,
+                uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        conn.close()
+        print(f"✅ Database initialized at {DB_PATH}")
+    except Exception as e:
+        print(f"❌ Database initialization error: {e}")
+        raise
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
@@ -86,7 +92,8 @@ def extract_text_ocr(filepath):
                 'detectOrientation': 'true',
                 'scale': 'true',
                 'OCREngine': '2'
-            }
+            },
+            timeout=60
         )
     
     result = response.json()
@@ -157,7 +164,8 @@ Return ONLY valid JSON (no markdown formatting) in this exact structure:
             ],
             'temperature': 0.2,
             'max_tokens': 4000
-        }
+        },
+        timeout=60
     )
     
     result = response.json()
@@ -199,6 +207,9 @@ def upload_file():
     if not allowed_file(file.filename):
         return jsonify({'error': 'Invalid file type'}), 400
     
+    filepath = None
+    conn = None
+    
     try:
         filename = secure_filename(file.filename)
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
@@ -219,11 +230,6 @@ def upload_file():
         # Get the last inserted ID
         ocr_id = conn.execute("SELECT MAX(id) FROM ocr_results").fetchone()[0]
         
-        conn.close()
-        
-        # Clean up uploaded file
-        os.remove(filepath)
-        
         return jsonify({
             'success': True,
             'ocr_id': ocr_id,
@@ -232,6 +238,16 @@ def upload_file():
     
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+    
+    finally:
+        # Clean up
+        if conn:
+            conn.close()
+        if filepath and os.path.exists(filepath):
+            try:
+                os.remove(filepath)
+            except:
+                pass
 
 @app.route('/api/generate', methods=['POST'])
 def generate_model():
@@ -242,6 +258,8 @@ def generate_model():
     
     if not ocr_id:
         return jsonify({'error': 'OCR ID required'}), 400
+    
+    conn = None
     
     try:
         conn = duckdb.connect(DB_PATH)
@@ -278,8 +296,6 @@ def generate_model():
         # Get the last inserted ID
         model_id = conn.execute("SELECT MAX(id) FROM dv_models").fetchone()[0]
         
-        conn.close()
-        
         return jsonify({
             'success': True,
             'model': model
@@ -287,6 +303,10 @@ def generate_model():
     
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+    
+    finally:
+        if conn:
+            conn.close()
 
 @app.route('/api/knowledge/upload', methods=['POST'])
 def upload_knowledge():
@@ -295,6 +315,7 @@ def upload_knowledge():
         return jsonify({'error': 'No file uploaded'}), 400
     
     file = request.files['file']
+    conn = None
     
     try:
         filename = secure_filename(file.filename)
@@ -308,16 +329,20 @@ def upload_knowledge():
             VALUES (?, ?, ?)
         """, [filename, content, datetime.now()])
         
-        conn.close()
-        
         return jsonify({'success': True, 'message': 'Knowledge document uploaded'})
     
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+    
+    finally:
+        if conn:
+            conn.close()
 
 @app.route('/api/models', methods=['GET'])
 def get_models():
     """Get all generated models"""
+    conn = None
+    
     try:
         conn = duckdb.connect(DB_PATH)
         results = conn.execute("""
@@ -326,7 +351,6 @@ def get_models():
             JOIN ocr_results o ON m.ocr_id = o.id
             ORDER BY m.created_at DESC
         """).fetchall()
-        conn.close()
         
         models = [{
             'id': r[0],
@@ -340,17 +364,22 @@ def get_models():
     
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+    
+    finally:
+        if conn:
+            conn.close()
 
 @app.route('/api/models/<int:model_id>', methods=['GET'])
 def get_model(model_id):
     """Get specific model by ID"""
+    conn = None
+    
     try:
         conn = duckdb.connect(DB_PATH)
         result = conn.execute(
             "SELECT model_json FROM dv_models WHERE id = ?",
             [model_id]
         ).fetchone()
-        conn.close()
         
         if not result:
             return jsonify({'error': 'Model not found'}), 404
@@ -362,7 +391,14 @@ def get_model(model_id):
     
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+    
+    finally:
+        if conn:
+            conn.close()
 
 if __name__ == '__main__':
     init_db()
     app.run(debug=True, host='0.0.0.0', port=5000)
+else:
+    # When running with gunicorn on Render
+    init_db()
