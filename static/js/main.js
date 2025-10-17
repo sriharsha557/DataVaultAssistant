@@ -1,6 +1,7 @@
 let cy;
 let currentOcrId = null;
 let currentModel = null;
+let fullOcrText = '';
 
 // Initialize Cytoscape with enhanced layout
 document.addEventListener('DOMContentLoaded', function() {
@@ -89,15 +90,17 @@ document.addEventListener('DOMContentLoaded', function() {
             name: 'cose',
             animate: true,
             animationDuration: 1000,
-            nodeRepulsion: 400000,
-            idealEdgeLength: 250,
-            edgeElasticity: 200,
-            nestingFactor: 1.2,
-            gravity: 1,
-            numIter: 1000,
+            nodeRepulsion: 900000,
+            idealEdgeLength: 350,
+            edgeElasticity: 100,
+            nestingFactor: 1.5,
+            gravity: 0.5,
+            numIter: 2000,
             initialTemp: 1000,
-            coolingFactor: 0.99,
-            minTemp: 1.0
+            coolingFactor: 0.95,
+            minTemp: 1.0,
+            avoidOverlap: true,
+            avoidOverlapPadding: 80
         }
     });
 
@@ -251,8 +254,12 @@ async function uploadSource() {
         
         if (data.success) {
             currentOcrId = data.ocr_id;
-            showStatus('uploadStatus', `✅ Schema extracted successfully!\n\nPreview:\n${data.extracted_text}`, 'success');
-            document.getElementById('generateBtn').disabled = false;
+            fullOcrText = data.full_text || data.extracted_text;
+            
+            // Show preview modal
+            document.getElementById('ocrPreviewText').textContent = fullOcrText;
+            document.getElementById('ocrPreviewModal').style.display = 'block';
+            
             fileInput.value = '';
         } else {
             showStatus('uploadStatus', `❌ ${data.error || 'Extraction failed'}`, 'error');
@@ -263,6 +270,69 @@ async function uploadSource() {
     } finally {
         document.getElementById('uploadBtn').disabled = false;
     }
+}
+
+// Manual schema submission
+async function submitManualSchema() {
+    const schemaText = document.getElementById('manualSchema').value.trim();
+    
+    if (!schemaText) {
+        showStatus('uploadStatus', 'Please enter schema text', 'error');
+        return;
+    }
+    
+    document.getElementById('manualBtn').disabled = true;
+    showStatus('uploadStatus', '⏳ Processing manual schema...', 'info');
+    
+    try {
+        const response = await fetch('/api/manual-schema', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                schema_text: schemaText
+            })
+        });
+        
+        if (!response.ok) {
+            const data = await parseJSON(response);
+            showStatus('uploadStatus', `❌ ${data.error || 'Processing failed'}`, 'error');
+            return;
+        }
+        
+        const data = await parseJSON(response);
+        
+        if (data.success) {
+            currentOcrId = data.ocr_id;
+            fullOcrText = schemaText;
+            
+            // Show preview modal
+            document.getElementById('ocrPreviewText').textContent = fullOcrText;
+            document.getElementById('ocrPreviewModal').style.display = 'block';
+        } else {
+            showStatus('uploadStatus', `❌ ${data.error || 'Processing failed'}`, 'error');
+        }
+    } catch (error) {
+        console.error('Manual schema error:', error);
+        showStatus('uploadStatus', `❌ Processing failed: ${error.message}`, 'error');
+    } finally {
+        document.getElementById('manualBtn').disabled = false;
+    }
+}
+
+// Close OCR preview
+function closeOcrPreview() {
+    document.getElementById('ocrPreviewModal').style.display = 'none';
+    currentOcrId = null;
+    fullOcrText = '';
+}
+
+// Confirm OCR and enable generation
+function confirmOcrAndGenerate() {
+    document.getElementById('ocrPreviewModal').style.display = 'none';
+    showStatus('uploadStatus', '✅ Schema loaded successfully! Ready to generate.', 'success');
+    document.getElementById('generateBtn').disabled = false;
 }
 
 // Generate Data Vault model
@@ -456,31 +526,31 @@ function visualizeModel(model) {
             // Physics parameters for better spacing
             nodeRepulsion: function(node) {
                 // Links need more space due to diamond shape
-                return node.data('type') === 'link' ? 800000 : 400000;
+                return node.data('type') === 'link' ? 1200000 : 900000;
             },
-            nodeOverlap: 100,
+            nodeOverlap: 150,
             idealEdgeLength: function(edge) {
                 const sourceType = edge.source().data('type');
                 const targetType = edge.target().data('type');
                 // More space for link connections
                 if (sourceType === 'link' || targetType === 'link') {
-                    return 300;
+                    return 400;
                 }
-                return 250;
+                return 350;
             },
-            edgeElasticity: 200,
-            nestingFactor: 1.2,
-            gravity: 0.8,
-            numIter: 1500,
+            edgeElasticity: 100,
+            nestingFactor: 1.5,
+            gravity: 0.5,
+            numIter: 2000,
             initialTemp: 1000,
-            coolingFactor: 0.99,
+            coolingFactor: 0.95,
             minTemp: 1.0,
-            padding: 100,
+            padding: 150,
             randomize: false,
-            componentSpacing: 200,
+            componentSpacing: 300,
             // Prevent overlaps
             avoidOverlap: true,
-            avoidOverlapPadding: 50
+            avoidOverlapPadding: 100
         });
         
         layout.run();
@@ -522,14 +592,14 @@ function resetLayout() {
             animate: true,
             animationDuration: 1500,
             nodeRepulsion: function(node) {
-                return node.data('type') === 'link' ? 800000 : 400000;
+                return node.data('type') === 'link' ? 1200000 : 900000;
             },
-            idealEdgeLength: 250,
-            edgeElasticity: 200,
-            gravity: 0.8,
-            numIter: 1500,
+            idealEdgeLength: 350,
+            edgeElasticity: 100,
+            gravity: 0.5,
+            numIter: 2000,
             avoidOverlap: true,
-            avoidOverlapPadding: 50
+            avoidOverlapPadding: 100
         });
         layout.run();
         
