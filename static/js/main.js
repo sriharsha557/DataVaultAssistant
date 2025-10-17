@@ -90,17 +90,17 @@ document.addEventListener('DOMContentLoaded', function() {
             name: 'cose',
             animate: true,
             animationDuration: 1000,
-            nodeRepulsion: 900000,
-            idealEdgeLength: 350,
-            edgeElasticity: 100,
-            nestingFactor: 1.5,
-            gravity: 0.5,
-            numIter: 2000,
-            initialTemp: 1000,
-            coolingFactor: 0.95,
+            nodeRepulsion: 2000000,
+            idealEdgeLength: 500,
+            edgeElasticity: 50,
+            nestingFactor: 2,
+            gravity: 0.3,
+            numIter: 3000,
+            initialTemp: 2000,
+            coolingFactor: 0.90,
             minTemp: 1.0,
             avoidOverlap: true,
-            avoidOverlapPadding: 80
+            avoidOverlapPadding: 150
         }
     });
 
@@ -256,8 +256,8 @@ async function uploadSource() {
             currentOcrId = data.ocr_id;
             fullOcrText = data.full_text || data.extracted_text;
             
-            // Show preview modal
-            document.getElementById('ocrPreviewText').textContent = fullOcrText;
+            // Show preview modal with editable textarea
+            document.getElementById('ocrPreviewText').value = fullOcrText;
             document.getElementById('ocrPreviewModal').style.display = 'block';
             
             fileInput.value = '';
@@ -307,8 +307,8 @@ async function submitManualSchema() {
             currentOcrId = data.ocr_id;
             fullOcrText = schemaText;
             
-            // Show preview modal
-            document.getElementById('ocrPreviewText').textContent = fullOcrText;
+            // Show preview modal with editable textarea
+            document.getElementById('ocrPreviewText').value = fullOcrText;
             document.getElementById('ocrPreviewModal').style.display = 'block';
         } else {
             showStatus('uploadStatus', `❌ ${data.error || 'Processing failed'}`, 'error');
@@ -329,7 +329,43 @@ function closeOcrPreview() {
 }
 
 // Confirm OCR and enable generation
-function confirmOcrAndGenerate() {
+async function confirmOcrAndGenerate() {
+    // Get the edited text from textarea
+    const editedText = document.getElementById('ocrPreviewText').value.trim();
+    
+    if (!editedText) {
+        alert('Schema text cannot be empty!');
+        return;
+    }
+    
+    // If text was edited, update it in the database
+    if (editedText !== fullOcrText) {
+        console.log('📝 Text was edited, updating in database...');
+        
+        try {
+            const response = await fetch('/api/update-ocr', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    ocr_id: currentOcrId,
+                    updated_text: editedText
+                })
+            });
+            
+            if (!response.ok) {
+                console.error('Failed to update edited text');
+            } else {
+                console.log('✅ Updated text saved');
+                fullOcrText = editedText;
+            }
+        } catch (error) {
+            console.error('Error updating text:', error);
+            // Continue anyway - user can still generate with edited text
+        }
+    }
+    
     document.getElementById('ocrPreviewModal').style.display = 'none';
     showStatus('uploadStatus', '✅ Schema loaded successfully! Ready to generate.', 'success');
     document.getElementById('generateBtn').disabled = false;
@@ -526,31 +562,31 @@ function visualizeModel(model) {
             // Physics parameters for better spacing
             nodeRepulsion: function(node) {
                 // Links need more space due to diamond shape
-                return node.data('type') === 'link' ? 1200000 : 900000;
+                return node.data('type') === 'link' ? 2500000 : 2000000;
             },
-            nodeOverlap: 150,
+            nodeOverlap: 200,
             idealEdgeLength: function(edge) {
                 const sourceType = edge.source().data('type');
                 const targetType = edge.target().data('type');
                 // More space for link connections
                 if (sourceType === 'link' || targetType === 'link') {
-                    return 400;
+                    return 600;
                 }
-                return 350;
+                return 500;
             },
-            edgeElasticity: 100,
-            nestingFactor: 1.5,
-            gravity: 0.5,
-            numIter: 2000,
-            initialTemp: 1000,
-            coolingFactor: 0.95,
+            edgeElasticity: 50,
+            nestingFactor: 2,
+            gravity: 0.3,
+            numIter: 3000,
+            initialTemp: 2000,
+            coolingFactor: 0.90,
             minTemp: 1.0,
-            padding: 150,
+            padding: 200,
             randomize: false,
-            componentSpacing: 300,
+            componentSpacing: 400,
             // Prevent overlaps
             avoidOverlap: true,
-            avoidOverlapPadding: 100
+            avoidOverlapPadding: 150
         });
         
         layout.run();
@@ -592,14 +628,14 @@ function resetLayout() {
             animate: true,
             animationDuration: 1500,
             nodeRepulsion: function(node) {
-                return node.data('type') === 'link' ? 1200000 : 900000;
+                return node.data('type') === 'link' ? 2500000 : 2000000;
             },
-            idealEdgeLength: 350,
-            edgeElasticity: 100,
-            gravity: 0.5,
-            numIter: 2000,
+            idealEdgeLength: 500,
+            edgeElasticity: 50,
+            gravity: 0.3,
+            numIter: 3000,
             avoidOverlap: true,
-            avoidOverlapPadding: 100
+            avoidOverlapPadding: 150
         });
         layout.run();
         
