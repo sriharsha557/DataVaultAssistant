@@ -2,23 +2,21 @@ services:
   - type: web
     name: datavault-assistant
     env: python
-    region: oregon
+    region: mumbai
     plan: free
     buildCommand: pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 180 --workers 2 --threads 4 --worker-class gthread --max-requests 1000 --max-requests-jitter 50 --log-level info
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 180 --workers 1 --threads 2 --worker-class gthread --max-requests 100 --max-requests-jitter 10 --log-level info --preload
     envVars:
       - key: OCR_SPACE_KEY
         sync: false
       - key: GROQ_API_KEY
-        sync: false
-      - key: TURSO_DATABASE_URL
-        sync: false
-      - key: TURSO_AUTH_TOKEN
         sync: false
       - key: FLASK_ENV
         value: production
       - key: PYTHON_VERSION
         value: 3.11.9
       - key: PIP_NO_CACHE_DIR
+        value: "1"
+      - key: PYTHONUNBUFFERED
         value: "1"
     healthCheckPath: /api/config/check
