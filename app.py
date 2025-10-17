@@ -457,6 +457,62 @@ def manual_schema():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/update-ocr', methods=['POST'])
+def update_ocr():
+    """Update OCR text after user edits"""
+    print("=" * 60, flush=True)
+    print("✏️ Update OCR request", flush=True)
+    
+    try:
+        if not _db_initialized:
+            init_db()
+        
+        data = request.get_json()
+        if not data or not data.get('ocr_id') or not data.get('updated_text'):
+            return jsonify({'error': 'Missing ocr_id or updated_text'}), 400
+        
+        ocr_id = data['ocr_id']
+        updated_text = data['updated_text'].strip()
+        
+        if not updated_text:
+            return jsonify({'error': 'Empty text'}), 400
+        
+        print(f"📝 Updating OCR ID {ocr_id}: {len(updated_text)} chars", flush=True)
+        
+        try:
+            conn = get_sqlite_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute(
+                "UPDATE ocr_results SET extracted_text = ? WHERE id = ?",
+                (updated_text, ocr_id)
+            )
+            
+            conn.commit()
+            
+            if cursor.rowcount == 0:
+                return jsonify({'error': 'OCR result not found'}), 404
+            
+            print(f"✅ Updated OCR ID {ocr_id}", flush=True)
+            print("=" * 60, flush=True)
+            
+            return jsonify({
+                'success': True,
+                'message': 'Text updated successfully'
+            }), 200
+        
+        except Exception as db_error:
+            print(f"❌ Database error: {db_error}", flush=True)
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': f"Database error: {str(db_error)}"}), 500
+    
+    except Exception as e:
+        print(f"❌ Request error: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/generate', methods=['POST'])
 def generate_model():
     """Generate Data Vault model"""
