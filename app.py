@@ -6,6 +6,7 @@ from werkzeug.utils import secure_filename
 import requests
 from datetime import datetime
 from contextlib import contextmanager
+import sys
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
@@ -26,38 +27,51 @@ USE_TURSO = bool(TURSO_URL and TURSO_TOKEN)
 
 # Thread-local storage for connections
 _local = threading.local()
-_db_lock = threading.Lock()
+_db_initialized = False
+_db_init_lock = threading.Lock()
 
 print(f"🔧 Database mode: {'Turso' if USE_TURSO else 'SQLite (local)'}", flush=True)
+print(f"🔑 OCR configured: {bool(OCR_API_KEY)}", flush=True)
+print(f"🔑 GROQ configured: {bool(GROQ_API_KEY)}", flush=True)
 
 @contextmanager
 def get_db_connection():
     """Get database connection - Turso or SQLite with proper thread safety"""
+    conn = None
     
-    if USE_TURSO:
-        # Use Turso (libsql) for production
-        try:
-            import libsql_experimental as libsql
-            
-            if not hasattr(_local, 'turso_conn') or _local.turso_conn is None:
-                _local.turso_conn = libsql.connect(
-                    database=TURSO_URL,
-                    auth_token=TURSO_TOKEN
-                )
-                print("✅ Turso connection established", flush=True)
-            
-            yield _local.turso_conn
-            
-        except ImportError:
-            print("❌ libsql_experimental not installed, falling back to SQLite", flush=True)
-            # Fallback to SQLite
-            yield from _get_sqlite_connection()
-        except Exception as e:
-            print(f"❌ Turso connection error: {e}, falling back to SQLite", flush=True)
-            yield from _get_sqlite_connection()
-    else:
-        # Use SQLite for local development
-        yield from _get_sqlite_connection()
+    try:
+        if USE_TURSO:
+            # Use Turso (libsql) for production
+            try:
+                import libsql_experimental as libsql
+                
+                if not hasattr(_local, 'turso_conn') or _local.turso_conn is None:
+                    _local.turso_conn = libsql.connect(
+                        database=TURSO_URL,
+                        auth_token=TURSO_TOKEN
+                    )
+                    print("✅ Turso connection established", flush=True)
+                
+                conn = _local.turso_conn
+                
+            except ImportError:
+                print("⚠️ libsql_experimental not installed, falling back to SQLite", flush=True)
+                conn = _get_sqlite_connection()
+            except Exception as e:
+                print(f"⚠️ Turso connection error: {e}, falling back to SQLite", flush=True)
+                conn = _get_sqlite_connection()
+        else:
+            # Use SQLite for local development
+            conn = _get_sqlite_connection()
+        
+        yield conn
+        
+    except Exception as e:
+        print(f"❌ Database connection error: {e}", flush=True)
+        raise
+    finally:
+        # Don't close connection - reuse it for thread lifetime
+        pass
 
 def _get_sqlite_connection():
     """Thread-safe SQLite connection"""
@@ -81,60 +95,81 @@ def _get_sqlite_connection():
             print(f"❌ SQLite connection error: {e}", flush=True)
             raise
     
-    yield _local.sqlite_conn
+    return _local.sqlite_conn
 
 def init_db():
-    """Initialize database with required tables"""
-    try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
+    """Initialize database with required tables - lazy initialization"""
+    global _db_initialized
+    
+    # Check if already initialized
+    if _db_initialized:
+        return True
+    
+    with _db_init_lock:
+        # Double-check after acquiring lock
+        if _db_initialized:
+            return True
+        
+        try:
+            print("🔄 Initializing database...", flush=True)
             
-            # Create tables
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS ocr_results (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    filename TEXT NOT NULL,
-                    extracted_text TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS dv_models (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    ocr_id INTEGER NOT NULL,
-                    model_json TEXT NOT NULL,
-                    grounded INTEGER DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (ocr_id) REFERENCES ocr_results(id)
-                )
-            """)
-            
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS knowledge_docs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Create indexes for performance
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_ocr_created 
-                ON ocr_results(created_at DESC)
-            """)
-            
-            cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_models_ocr 
-                ON dv_models(ocr_id)
-            """)
-            
-            conn.commit()
-            print("✅ Database initialized", flush=True)
-    except Exception as e:
-        print(f"❌ Database initialization error: {e}", flush=True)
-        raise
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Create tables
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS ocr_results (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        filename TEXT NOT NULL,
+                        extracted_text TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS dv_models (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        ocr_id INTEGER NOT NULL,
+                        model_json TEXT NOT NULL,
+                        grounded INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (ocr_id) REFERENCES ocr_results(id)
+                    )
+                """)
+                
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS knowledge_docs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                # Create indexes for performance
+                try:
+                    cursor.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_ocr_created 
+                        ON ocr_results(created_at DESC)
+                    """)
+                    
+                    cursor.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_models_ocr 
+                        ON dv_models(ocr_id)
+                    """)
+                except Exception as idx_error:
+                    print(f"⚠️ Index creation warning: {idx_error}", flush=True)
+                
+                conn.commit()
+                print("✅ Database initialized successfully", flush=True)
+                _db_initialized = True
+                return True
+                
+        except Exception as e:
+            print(f"❌ Database initialization error: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            return False
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
@@ -145,6 +180,8 @@ def extract_text_ocr(filepath):
         raise ValueError("OCR_SPACE_KEY not configured")
     
     try:
+        print(f"📤 Sending file to OCR.space API...", flush=True)
+        
         with open(filepath, 'rb') as f:
             response = requests.post(
                 'https://api.ocr.space/parse/image',
@@ -157,29 +194,38 @@ def extract_text_ocr(filepath):
                     'scale': 'true',
                     'OCREngine': '2'
                 },
-                timeout=120
+                timeout=150  # Increased timeout for large images
             )
         
+        print(f"📥 OCR API response status: {response.status_code}", flush=True)
         response.raise_for_status()
         result = response.json()
         
         if result.get('IsErroredOnProcessing'):
-            raise Exception(result.get('ErrorMessage', 'OCR processing failed'))
+            error_msg = result.get('ErrorMessage', 'OCR processing failed')
+            print(f"❌ OCR API error: {error_msg}", flush=True)
+            raise Exception(error_msg)
         
         if not result.get('ParsedResults') or len(result['ParsedResults']) == 0:
+            print(f"❌ No OCR results returned", flush=True)
             raise Exception('No OCR results returned')
         
         parsed_text = result['ParsedResults'][0].get('ParsedText', '')
         if not parsed_text:
+            print(f"❌ OCR extracted empty text", flush=True)
             raise Exception('OCR extracted empty text - try a clearer image')
         
+        print(f"✅ OCR extracted {len(parsed_text)} characters", flush=True)
         return parsed_text
     
     except requests.exceptions.Timeout:
+        print(f"❌ OCR API timeout", flush=True)
         raise Exception("OCR API request timed out - try a smaller image")
     except requests.exceptions.RequestException as e:
+        print(f"❌ OCR API request error: {str(e)}", flush=True)
         raise Exception(f"OCR API request failed: {str(e)}")
     except Exception as e:
+        print(f"❌ OCR extraction error: {str(e)}", flush=True)
         raise Exception(f"OCR extraction error: {str(e)}")
 
 def validate_dv_model(model):
@@ -209,19 +255,22 @@ def validate_dv_model(model):
             target = edge.get('to') or edge.get('target')
             
             if not source or not target:
-                raise ValueError(f"Edge {idx} missing source or target")
+                print(f"⚠️ Edge {idx} missing source or target", flush=True)
+                continue
             
             if source not in node_ids:
-                raise ValueError(f"Edge {idx} references non-existent source node: {source}")
+                print(f"⚠️ Edge {idx} references non-existent source: {source}", flush=True)
+                continue
             
             if target not in node_ids:
-                raise ValueError(f"Edge {idx} references non-existent target node: {target}")
+                print(f"⚠️ Edge {idx} references non-existent target: {target}", flush=True)
+                continue
     
     # Validate parent references for satellites
     for node in model['nodes']:
         if node.get('type') == 'satellite' and node.get('parent'):
             if node['parent'] not in node_ids:
-                raise ValueError(f"Satellite {node['id']} references non-existent parent: {node['parent']}")
+                print(f"⚠️ Satellite {node['id']} references non-existent parent: {node['parent']}", flush=True)
     
     return True
 
@@ -246,7 +295,7 @@ Follow these guidelines strictly when creating the model."""
 
 Source Schema (extracted from ERD):
 <<<
-{ocr_text}
+{ocr_text[:4000]}
 >>>
 
 CRITICAL INSTRUCTIONS:
@@ -283,6 +332,8 @@ VALIDATION RULES:
 Your response must be ONLY the JSON object, nothing else."""
     
     try:
+        print(f"🤖 Sending request to GROQ API...", flush=True)
+        
         response = requests.post(
             'https://api.groq.com/openai/v1/chat/completions',
             headers={
@@ -295,32 +346,38 @@ Your response must be ONLY the JSON object, nothing else."""
                     {'role': 'system', 'content': system_prompt},
                     {'role': 'user', 'content': user_prompt}
                 ],
-                'temperature': 0.1,  # Lower temperature for more consistent output
+                'temperature': 0.1,
                 'max_tokens': 4000
             },
-            timeout=60
+            timeout=90  # Increased timeout
         )
         
+        print(f"📥 GROQ API response status: {response.status_code}", flush=True)
         response.raise_for_status()
         result = response.json()
         
         if 'error' in result:
             error_msg = result['error'].get('message', 'Unknown GROQ error')
+            print(f"❌ GROQ API error: {error_msg}", flush=True)
             raise Exception(f"GROQ API error: {error_msg}")
         
         if not result.get('choices') or len(result['choices']) == 0:
+            print(f"❌ No response from GROQ API", flush=True)
             raise Exception('No response from GROQ API')
         
         content = result['choices'][0]['message']['content'].strip()
+        print(f"📄 GROQ response length: {len(content)} chars", flush=True)
         
         # Clean markdown formatting if present
         content = content.replace('```json', '').replace('```', '').strip()
         
         # Parse JSON
         model = json.loads(content)
+        print(f"✅ JSON parsed successfully", flush=True)
         
         # Validate model structure
         validate_dv_model(model)
+        print(f"✅ Model validated", flush=True)
         
         # Ensure edges array exists
         if 'edges' not in model:
@@ -330,6 +387,7 @@ Your response must be ONLY the JSON object, nothing else."""
         node_lookup = {node['id']: node for node in model['nodes']}
         existing_edges = {(e.get('from'), e.get('to')) for e in model['edges']}
         
+        auto_edges = 0
         for node in model['nodes']:
             if node['type'] == 'satellite' and node.get('parent'):
                 parent_id = node['parent']
@@ -338,7 +396,7 @@ Your response must be ONLY the JSON object, nothing else."""
                         'from': parent_id,
                         'to': node['id']
                     })
-                    print(f"✅ Auto-created edge: {parent_id} -> {node['id']}", flush=True)
+                    auto_edges += 1
             
             elif node['type'] == 'link' and node.get('connects'):
                 for hub_id in node['connects']:
@@ -347,16 +405,25 @@ Your response must be ONLY the JSON object, nothing else."""
                             'from': hub_id,
                             'to': node['id']
                         })
-                        print(f"✅ Auto-created edge: {hub_id} -> {node['id']}", flush=True)
+                        auto_edges += 1
         
-        print(f"✅ Model validated: {len(model['nodes'])} nodes, {len(model['edges'])} edges", flush=True)
+        if auto_edges > 0:
+            print(f"✅ Auto-created {auto_edges} missing edges", flush=True)
+        
+        print(f"✅ Final model: {len(model['nodes'])} nodes, {len(model['edges'])} edges", flush=True)
         return model
     
+    except requests.exceptions.Timeout:
+        print(f"❌ GROQ API timeout", flush=True)
+        raise Exception("GROQ API request timed out")
     except requests.exceptions.RequestException as e:
+        print(f"❌ GROQ API request error: {str(e)}", flush=True)
         raise Exception(f"GROQ API request failed: {str(e)}")
     except json.JSONDecodeError as e:
+        print(f"❌ JSON parse error: {str(e)}", flush=True)
         raise Exception(f"Failed to parse GROQ response as JSON: {str(e)}")
     except Exception as e:
+        print(f"❌ Model generation error: {str(e)}", flush=True)
         raise Exception(f"Model generation error: {str(e)}")
 
 @app.route('/')
@@ -365,32 +432,50 @@ def index():
 
 @app.route('/api/config/check', methods=['GET'])
 def check_config():
-    """Check if API keys are configured"""
-    return jsonify({
-        'ocr_configured': bool(OCR_API_KEY),
-        'groq_configured': bool(GROQ_API_KEY),
-        'database': 'Turso' if USE_TURSO else 'SQLite'
-    })
+    """Check if API keys are configured and database is ready"""
+    try:
+        # Ensure database is initialized
+        if not _db_initialized:
+            init_db()
+        
+        return jsonify({
+            'ocr_configured': bool(OCR_API_KEY),
+            'groq_configured': bool(GROQ_API_KEY),
+            'database': 'Turso' if USE_TURSO else 'SQLite',
+            'database_ready': _db_initialized
+        }), 200
+    except Exception as e:
+        print(f"❌ Config check error: {str(e)}", flush=True)
+        return jsonify({
+            'ocr_configured': bool(OCR_API_KEY),
+            'groq_configured': bool(GROQ_API_KEY),
+            'database': 'Error',
+            'database_ready': False,
+            'error': str(e)
+        }), 500
 
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
     """Handle file upload and OCR extraction"""
+    print("=" * 60, flush=True)
     print("📤 Upload request received", flush=True)
     
     try:
+        # Ensure database is ready
+        if not _db_initialized:
+            init_db()
+        
         if 'file' not in request.files:
             print("❌ No file in request", flush=True)
             return jsonify({'error': 'No file uploaded'}), 400
         
         file = request.files['file']
-        print(f"📄 File received: {file.filename}", flush=True)
+        print(f"📄 File: {file.filename}", flush=True)
         
         if file.filename == '':
-            print("❌ Empty filename", flush=True)
             return jsonify({'error': 'No file selected'}), 400
         
         if not allowed_file(file.filename):
-            print(f"❌ File type not allowed: {file.filename}", flush=True)
             return jsonify({'error': 'Invalid file type. Allowed: PNG, JPG, JPEG, PDF, GIF'}), 400
         
         filepath = None
@@ -398,17 +483,13 @@ def upload_file():
         try:
             filename = secure_filename(file.filename)
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-            print(f"💾 Saving to: {filepath}", flush=True)
             file.save(filepath)
-            print(f"✅ File saved", flush=True)
+            print(f"✅ File saved: {filepath}", flush=True)
             
             # Extract text via OCR
-            print(f"🔍 Starting OCR extraction...", flush=True)
             extracted_text = extract_text_ocr(filepath)
-            print(f"✅ OCR complete. Text length: {len(extracted_text)}", flush=True)
             
             # Store in database
-            print(f"💾 Storing in database...", flush=True)
             with get_db_connection() as conn:
                 cursor = conn.cursor()
                 
@@ -417,11 +498,18 @@ def upload_file():
                     VALUES (?, ?, ?)
                 """, (filename, extracted_text, datetime.now().isoformat()))
                 
-                ocr_id = cursor.lastrowid
+                if USE_TURSO:
+                    ocr_id = cursor.lastrowid
+                else:
+                    ocr_id = cursor.lastrowid
+                
                 conn.commit()
                 print(f"✅ Stored with OCR ID: {ocr_id}", flush=True)
             
             preview = extracted_text[:500] + '...' if len(extracted_text) > 500 else extracted_text
+            
+            print("✅ Upload successful", flush=True)
+            print("=" * 60, flush=True)
             
             return jsonify({
                 'success': True,
@@ -431,7 +519,7 @@ def upload_file():
         
         except Exception as e:
             error_msg = str(e)
-            print(f"❌ Upload processing error: {error_msg}", flush=True)
+            print(f"❌ Processing error: {error_msg}", flush=True)
             import traceback
             traceback.print_exc()
             return jsonify({'error': error_msg}), 500
@@ -442,11 +530,11 @@ def upload_file():
                     os.remove(filepath)
                     print(f"✅ Temp file deleted", flush=True)
                 except Exception as e:
-                    print(f"⚠️ Error deleting temp file: {e}", flush=True)
+                    print(f"⚠️ Could not delete temp file: {e}", flush=True)
     
     except Exception as e:
         error_msg = str(e)
-        print(f"❌ Outer exception in upload: {error_msg}", flush=True)
+        print(f"❌ Outer exception: {error_msg}", flush=True)
         import traceback
         traceback.print_exc()
         return jsonify({'error': f'Request processing error: {error_msg}'}), 500
@@ -454,14 +542,17 @@ def upload_file():
 @app.route('/api/generate', methods=['POST'])
 def generate_model():
     """Generate Data Vault model from OCR text"""
+    print("=" * 60, flush=True)
     print("🧠 Generate request received", flush=True)
     
     try:
+        # Ensure database is ready
+        if not _db_initialized:
+            init_db()
+        
         data = request.get_json()
-        print(f"📦 Request data: {data}", flush=True)
         
         if not data:
-            print("❌ No JSON data provided", flush=True)
             return jsonify({'error': 'No JSON data provided'}), 400
         
         ocr_id = data.get('ocr_id')
@@ -469,46 +560,38 @@ def generate_model():
         print(f"🔍 OCR ID: {ocr_id}, Grounded: {grounded}", flush=True)
         
         if not ocr_id:
-            print("❌ OCR ID missing", flush=True)
             return jsonify({'error': 'OCR ID required'}), 400
         
         try:
+            # Get OCR text
             with get_db_connection() as conn:
                 cursor = conn.cursor()
                 
-                # Get OCR text
-                print(f"📖 Fetching OCR result {ocr_id}...", flush=True)
                 cursor.execute("SELECT extracted_text FROM ocr_results WHERE id = ?", (ocr_id,))
                 result = cursor.fetchone()
                 
                 if not result:
-                    print(f"❌ OCR result {ocr_id} not found", flush=True)
                     return jsonify({'error': 'OCR result not found'}), 404
                 
                 ocr_text = result[0] if isinstance(result, tuple) else result['extracted_text']
-                print(f"✅ OCR text loaded, length: {len(ocr_text)}", flush=True)
+                print(f"✅ OCR text loaded: {len(ocr_text)} chars", flush=True)
                 
                 # Get knowledge doc if grounded mode
                 knowledge_content = ''
                 if grounded:
-                    print(f"📚 Fetching knowledge doc...", flush=True)
                     cursor.execute("SELECT content FROM knowledge_docs ORDER BY uploaded_at DESC LIMIT 1")
                     knowledge = cursor.fetchone()
                     if knowledge:
                         knowledge_content = knowledge[0] if isinstance(knowledge, tuple) else knowledge['content']
-                        print(f"✅ Knowledge doc loaded, length: {len(knowledge_content)}", flush=True)
-                    else:
-                        print(f"⚠️ No knowledge doc found", flush=True)
+                        print(f"✅ Knowledge loaded: {len(knowledge_content)} chars", flush=True)
             
-            # Generate model (outside connection context to avoid timeout)
-            print(f"🤖 Calling GROQ API...", flush=True)
+            # Generate model (outside connection to avoid timeout)
             model = generate_dv_model(ocr_text, grounded, knowledge_content)
-            print(f"✅ Model generated with {len(model.get('nodes', []))} nodes, {len(model.get('edges', []))} edges", flush=True)
             
             # Store model
             with get_db_connection() as conn:
                 cursor = conn.cursor()
-                print(f"💾 Storing model...", flush=True)
+                
                 cursor.execute("""
                     INSERT INTO dv_models (ocr_id, model_json, grounded, created_at)
                     VALUES (?, ?, ?, ?)
@@ -516,7 +599,10 @@ def generate_model():
                 
                 model_id = cursor.lastrowid
                 conn.commit()
-                print(f"✅ Model stored with ID: {model_id}", flush=True)
+                print(f"✅ Model stored: ID {model_id}", flush=True)
+            
+            print("✅ Generation successful", flush=True)
+            print("=" * 60, flush=True)
             
             return jsonify({
                 'success': True,
@@ -533,7 +619,7 @@ def generate_model():
     
     except Exception as e:
         error_msg = str(e)
-        print(f"❌ Outer exception in generate: {error_msg}", flush=True)
+        print(f"❌ Outer exception: {error_msg}", flush=True)
         import traceback
         traceback.print_exc()
         return jsonify({'error': f'Request processing error: {error_msg}'}), 500
@@ -541,12 +627,16 @@ def generate_model():
 @app.route('/api/knowledge/upload', methods=['POST'])
 def upload_knowledge():
     """Upload DV2.1 methodology document"""
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file uploaded'}), 400
-    
-    file = request.files['file']
-    
     try:
+        # Ensure database is ready
+        if not _db_initialized:
+            init_db()
+        
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file uploaded'}), 400
+        
+        file = request.files['file']
+        
         filename = secure_filename(file.filename)
         content = file.read().decode('utf-8', errors='replace')
         
@@ -571,6 +661,10 @@ def upload_knowledge():
 def get_models():
     """Get all generated models"""
     try:
+        # Ensure database is ready
+        if not _db_initialized:
+            init_db()
+        
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
@@ -602,6 +696,10 @@ def get_models():
 def get_model(model_id):
     """Get specific model by ID"""
     try:
+        # Ensure database is ready
+        if not _db_initialized:
+            init_db()
+        
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
@@ -629,16 +727,19 @@ def handle_error(error):
     print(f"❌ Unhandled error: {str(error)}", flush=True)
     import traceback
     traceback.print_exc()
-    return jsonify({'error': 'Internal server error'}), 500
+    return jsonify({'error': 'Internal server error', 'details': str(error)}), 500
+
+@app.errorhandler(504)
+def handle_timeout(error):
+    """Handle gateway timeout"""
+    print(f"❌ Gateway timeout", flush=True)
+    return jsonify({'error': 'Request timed out. Please try with a smaller image or simpler model.'}), 504
 
 if __name__ == '__main__':
     try:
-        print("🚀 Initializing database...", flush=True)
+        print("🚀 Starting application...", flush=True)
         init_db()
-        print("✅ Database initialized", flush=True)
-        print(f"🔍 OCR configured: {bool(OCR_API_KEY)}", flush=True)
-        print(f"🔍 GROQ configured: {bool(GROQ_API_KEY)}", flush=True)
-        print(f"🔍 Using: {'Turso' if USE_TURSO else 'SQLite'}", flush=True)
+        print(f"✅ Database: {'Turso' if USE_TURSO else 'SQLite'}", flush=True)
         app.run(debug=True, host='0.0.0.0', port=5000)
     except Exception as e:
         print(f"❌ Startup error: {str(e)}", flush=True)
@@ -647,12 +748,6 @@ if __name__ == '__main__':
         raise
 else:
     # When running with gunicorn (on Render)
-    try:
-        print("🚀 Initializing database (gunicorn)...", flush=True)
-        init_db()
-        print("✅ Database initialized (gunicorn)", flush=True)
-        print(f"🔍 Using: {'Turso' if USE_TURSO else 'SQLite'}", flush=True)
-    except Exception as e:
-        print(f"❌ Database init error (gunicorn): {str(e)}", flush=True)
-        import traceback
-        traceback.print_exc()
+    # Lazy initialization - database will be initialized on first request
+    print("🚀 Application loaded (gunicorn mode)", flush=True)
+    print(f"🔧 Database: {'Turso' if USE_TURSO else 'SQLite'}", flush=True)
