@@ -56,15 +56,20 @@
                 <div id="ocrPreviewModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 1000; padding: 40px;">
                     <div style="background: white; border-radius: 8px; max-width: 800px; margin: 0 auto; height: calc(100% - 80px); display: flex; flex-direction: column;">
                         <div style="padding: 20px; border-bottom: 1px solid #e1e4e8;">
-                            <h2 style="margin: 0;">📄 OCR Extraction Preview</h2>
-                            <p style="margin: 8px 0 0 0; font-size: 13px; color: #6a737d;">Review the extracted text before generating the Data Vault model</p>
+                            <h2 style="margin: 0;">📄 Review & Edit Extracted Schema</h2>
+                            <p style="margin: 8px 0 0 0; font-size: 13px; color: #6a737d;">Review and edit the text before generating the Data Vault model</p>
                         </div>
                         <div style="flex: 1; overflow-y: auto; padding: 20px; background: #f6f8fa;">
-                            <pre id="ocrPreviewText" style="white-space: pre-wrap; font-family: monospace; font-size: 13px; line-height: 1.6; background: white; padding: 16px; border-radius: 6px; border: 1px solid #e1e4e8;"></pre>
+                            <textarea id="ocrPreviewText" style="width: 100%; height: 100%; min-height: 400px; white-space: pre-wrap; font-family: monospace; font-size: 13px; line-height: 1.6; background: white; padding: 16px; border-radius: 6px; border: 1px solid #e1e4e8; resize: vertical;"></textarea>
                         </div>
-                        <div style="padding: 20px; border-top: 1px solid #e1e4e8; display: flex; gap: 12px; justify-content: flex-end;">
-                            <button onclick="closeOcrPreview()" class="btn btn-secondary" style="width: auto;">Cancel</button>
-                            <button onclick="confirmOcrAndGenerate()" class="btn btn-primary" style="width: auto;">✓ Looks Good - Proceed to Generate</button>
+                        <div style="padding: 20px; border-top: 1px solid #e1e4e8; display: flex; gap: 12px; justify-content: space-between;">
+                            <div style="font-size: 12px; color: #6a737d; display: flex; align-items: center;">
+                                💡 Tip: You can edit the text above before proceeding
+                            </div>
+                            <div style="display: flex; gap: 12px;">
+                                <button onclick="closeOcrPreview()" class="btn btn-secondary" style="width: auto;">Cancel</button>
+                                <button onclick="confirmOcrAndGenerate()" class="btn btn-primary" style="width: auto;">✓ Looks Good - Proceed to Generate</button>
+                            </div>
                         </div>
                     </div>
                 </div>
