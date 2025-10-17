@@ -379,7 +379,8 @@ def upload_file():
             return jsonify({
                 'success': True,
                 'ocr_id': ocr_id,
-                'extracted_text': preview
+                'extracted_text': preview,
+                'full_text': extracted_text
             }), 200
         
         except Exception as e:
@@ -395,6 +396,60 @@ def upload_file():
                     print(f"✅ Temp file deleted", flush=True)
                 except:
                     pass
+    
+    except Exception as e:
+        print(f"❌ Request error: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/manual-schema', methods=['POST'])
+def manual_schema():
+    """Handle manual schema text input"""
+    print("=" * 60, flush=True)
+    print("📝 Manual schema request", flush=True)
+    
+    try:
+        if not _db_initialized:
+            init_db()
+        
+        data = request.get_json()
+        if not data or not data.get('schema_text'):
+            return jsonify({'error': 'Missing schema text'}), 400
+        
+        schema_text = data['schema_text'].strip()
+        
+        if not schema_text:
+            return jsonify({'error': 'Empty schema text'}), 400
+        
+        print(f"📄 Schema text: {len(schema_text)} chars", flush=True)
+        
+        try:
+            conn = get_sqlite_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute(
+                "INSERT INTO ocr_results (filename, extracted_text, created_at) VALUES (?, ?, ?)",
+                ('manual_input.txt', schema_text, datetime.now().isoformat())
+            )
+            
+            ocr_id = cursor.lastrowid
+            conn.commit()
+            
+            print(f"✅ Stored: OCR ID {ocr_id}", flush=True)
+            print("=" * 60, flush=True)
+            
+            return jsonify({
+                'success': True,
+                'ocr_id': ocr_id,
+                'extracted_text': schema_text[:500] + '...' if len(schema_text) > 500 else schema_text
+            }), 200
+        
+        except Exception as db_error:
+            print(f"❌ Database error: {db_error}", flush=True)
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': f"Database error: {str(db_error)}"}), 500
     
     except Exception as e:
         print(f"❌ Request error: {e}", flush=True)
