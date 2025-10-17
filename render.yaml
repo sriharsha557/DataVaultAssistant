@@ -5,11 +5,15 @@ services:
     region: oregon
     plan: free
     buildCommand: pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 180 --workers 2 --threads 4 --worker-class gthread --max-requests 1000 --max-requests-jitter 50 --log-level info
     envVars:
       - key: OCR_SPACE_KEY
         sync: false
       - key: GROQ_API_KEY
+        sync: false
+      - key: TURSO_DATABASE_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
         sync: false
       - key: FLASK_ENV
         value: production
@@ -17,3 +21,4 @@ services:
         value: 3.11.9
       - key: PIP_NO_CACHE_DIR
         value: "1"
+    healthCheckPath: /api/config/check
