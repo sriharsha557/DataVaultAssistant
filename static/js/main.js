@@ -661,10 +661,13 @@ function visualizeModel(model) {
         
         layout.run();
         
-        // Don't animate - just fit immediately
+        // Don't auto-fit - let user see proper spacing
+        // Users can use the "Fit to Screen" button if needed
         setTimeout(() => {
-            cy.fit(60);
-            console.log('✅ Layout complete - No overlapping!');
+            // Center on hubs (top layer) with proper zoom
+            cy.zoom(0.7);  // Fixed zoom level to show spacing
+            cy.center(hubs);
+            console.log('✅ Layout complete - No overlapping! Use Fit to Screen button to adjust view.');
         }, 100);
         
         showStatus('generateStatus', 
