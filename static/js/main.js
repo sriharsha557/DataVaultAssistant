@@ -419,7 +419,8 @@ async function generateModel() {
     }
 }
 
-// Replace the visualizeModel function in static/js/main.js with this improved version
+// Replace the visualizeModel function in static/js/main.js with this version
+// This creates MAXIMUM separation between Hubs, Links, and Satellites
 
 function visualizeModel(model) {
     cy.elements().remove();
@@ -458,6 +459,13 @@ function visualizeModel(model) {
         });
         
         console.log(`✅ Validated ${validNodes.length} nodes`);
+        
+        // Separate nodes by type BEFORE adding to Cytoscape
+        const hubNodes = validNodes.filter(n => n.type === 'hub');
+        const linkNodes = validNodes.filter(n => n.type === 'link');
+        const satelliteNodes = validNodes.filter(n => n.type === 'satellite');
+        
+        console.log(`📊 Node breakdown: ${hubNodes.length} hubs, ${linkNodes.length} links, ${satelliteNodes.length} satellites`);
         
         // Add nodes to Cytoscape
         validNodes.forEach(node => {
@@ -554,72 +562,116 @@ function visualizeModel(model) {
         
         console.log(`✅ Added ${edgeArray.length} edges to visualization`);
         
-        // FIXED LAYOUT: Hierarchical positioning to prevent overlaps
-        // Separate nodes by type for clear visualization
+        // ====================================================================
+        // MAXIMUM SEPARATION LAYOUT - NO OVERLAPPING
+        // ====================================================================
+        
         const hubs = cy.nodes('[type="hub"]');
         const links = cy.nodes('[type="link"]');
         const satellites = cy.nodes('[type="satellite"]');
         
-        // Calculate viewport center
-        const viewportWidth = document.getElementById('cy').offsetWidth || 1200;
+        console.log(`🎯 Positioning with MAXIMUM separation:`);
+        console.log(`   ${hubs.length} hubs, ${links.length} links, ${satellites.length} satellites`);
+        
+        // Calculate viewport dimensions
+        const viewportWidth = document.getElementById('cy').offsetWidth || 1400;
         const centerX = viewportWidth / 2;
-        const horizontalSpacing = 280; // Space between nodes horizontally
         
-        // Position hubs in top row (y=150)
-        hubs.forEach((node, idx) => {
-            const totalWidth = (hubs.length - 1) * horizontalSpacing;
-            const startX = centerX - totalWidth / 2;
-            const x = startX + idx * horizontalSpacing;
-            node.position({ x: x, y: 150 });
-        });
+        // CRITICAL: Much larger spacing to prevent any overlaps
+        const horizontalSpacing = 350;  // Wide horizontal gaps
+        const largeVerticalGap = 500;   // HUGE vertical gaps between layers
         
-        // Position links in middle row (y=450)
-        links.forEach((node, idx) => {
-            const totalWidth = (links.length - 1) * horizontalSpacing;
-            const startX = centerX - totalWidth / 2;
-            const x = startX + idx * horizontalSpacing;
-            node.position({ x: x, y: 450 });
-        });
+        // ====================================================================
+        // LAYER 1: HUBS at TOP (y = 100)
+        // ====================================================================
+        const hubY = 100;
+        if (hubs.length > 0) {
+            const hubsPerRow = 6;  // Max hubs per row
+            hubs.forEach((node, idx) => {
+                const row = Math.floor(idx / hubsPerRow);
+                const col = idx % hubsPerRow;
+                const hubsInRow = Math.min(hubs.length - row * hubsPerRow, hubsPerRow);
+                const totalWidth = (hubsInRow - 1) * horizontalSpacing;
+                const startX = centerX - totalWidth / 2;
+                const x = startX + col * horizontalSpacing;
+                const y = hubY + row * 250;  // Space between hub rows if multiple
+                node.position({ x: x, y: y });
+                console.log(`📍 HUB: ${node.id()} → (${x}, ${y})`);
+            });
+        }
         
-        // Position satellites in bottom rows (y=750+)
-        const satsPerRow = 5; // Max satellites per row
-        satellites.forEach((node, idx) => {
-            const row = Math.floor(idx / satsPerRow);
-            const col = idx % satsPerRow;
-            const satsInThisRow = Math.min(satellites.length - row * satsPerRow, satsPerRow);
-            const totalWidth = (satsInThisRow - 1) * horizontalSpacing;
-            const startX = centerX - totalWidth / 2;
-            const x = startX + col * horizontalSpacing;
-            const y = 750 + row * 220; // Vertical spacing between rows
-            node.position({ x: x, y: y });
-        });
+        // Calculate the bottom of hub layer
+        const hubRowCount = Math.ceil(hubs.length / 6);
+        const hubLayerBottom = hubY + (hubRowCount - 1) * 250;
         
-        console.log(`✅ Positioned: ${hubs.length} hubs, ${links.length} links, ${satellites.length} satellites`);
+        // ====================================================================
+        // LAYER 2: LINKS in MIDDLE
+        // ====================================================================
+        const linkY = hubLayerBottom + largeVerticalGap;  // FAR below hubs
+        if (links.length > 0) {
+            const linksPerRow = 5;
+            links.forEach((node, idx) => {
+                const row = Math.floor(idx / linksPerRow);
+                const col = idx % linksPerRow;
+                const linksInRow = Math.min(links.length - row * linksPerRow, linksPerRow);
+                const totalWidth = (linksInRow - 1) * horizontalSpacing;
+                const startX = centerX - totalWidth / 2;
+                const x = startX + col * horizontalSpacing;
+                const y = linkY + row * 280;  // Space between link rows
+                node.position({ x: x, y: y });
+                console.log(`📍 LINK: ${node.id()} → (${x}, ${y})`);
+            });
+        }
         
-        // Apply preset layout (uses fixed positions we just set)
+        // Calculate the bottom of link layer
+        const linkRowCount = Math.ceil(links.length / 5);
+        const linkLayerBottom = linkY + (linkRowCount - 1) * 280;
+        
+        // ====================================================================
+        // LAYER 3: SATELLITES at BOTTOM
+        // ====================================================================
+        const satelliteY = linkLayerBottom + largeVerticalGap;  // FAR below links
+        if (satellites.length > 0) {
+            const satsPerRow = 6;
+            satellites.forEach((node, idx) => {
+                const row = Math.floor(idx / satsPerRow);
+                const col = idx % satsPerRow;
+                const satsInRow = Math.min(satellites.length - row * satsPerRow, satsPerRow);
+                const totalWidth = (satsInRow - 1) * horizontalSpacing;
+                const startX = centerX - totalWidth / 2;
+                const x = startX + col * horizontalSpacing;
+                const y = satelliteY + row * 250;  // Space between satellite rows
+                node.position({ x: x, y: y });
+                console.log(`📍 SATELLITE: ${node.id()} → (${x}, ${y})`);
+            });
+        }
+        
+        console.log('✅ All nodes positioned with MAXIMUM separation');
+        console.log(`   Hub layer: y=${hubY} to ${hubLayerBottom}`);
+        console.log(`   Link layer: y=${linkY} to ${linkLayerBottom}`);
+        console.log(`   Satellite layer: y=${satelliteY}+`);
+        console.log(`   Gap between layers: ${largeVerticalGap}px`);
+        
+        // Apply preset layout - this respects our exact positions
         const layout = cy.layout({
             name: 'preset',
-            animate: true,
-            animationDuration: 800,
-            animationEasing: 'ease-out',
             fit: true,
             padding: 80
         });
         
         layout.run();
         
-        // Fit to screen after layout completes
-        layout.on('layoutstop', function() {
-            setTimeout(() => {
-                cy.fit(60); // More padding for better visibility
-                console.log('✅ Layout complete - hierarchical structure applied');
-            }, 100);
-        });
+        // Don't animate - just fit immediately
+        setTimeout(() => {
+            cy.fit(60);
+            console.log('✅ Layout complete - No overlapping!');
+        }, 100);
         
         showStatus('generateStatus', 
-            `✅ Visualization complete: ${hubs.length} hubs, ${links.length} links, ${satellites.length} satellites (hierarchical layout)`, 
+            `✅ Visualization complete with maximum separation: ${hubs.length} hubs, ${links.length} links, ${satellites.length} satellites`, 
             'success'
         );
+        
     } catch (error) {
         console.error('❌ Visualization error:', error);
         showStatus('generateStatus', `❌ Visualization failed: ${error.message}`, 'error');
