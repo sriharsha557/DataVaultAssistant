@@ -419,7 +419,8 @@ async function generateModel() {
     }
 }
 
-// Visualize model with Cytoscape - Enhanced with auto-edge creation
+// Replace the visualizeModel function in static/js/main.js with this improved version
+
 function visualizeModel(model) {
     cy.elements().remove();
     
@@ -553,40 +554,56 @@ function visualizeModel(model) {
         
         console.log(`✅ Added ${edgeArray.length} edges to visualization`);
         
-        // Apply enhanced layout with better spacing
+        // FIXED LAYOUT: Hierarchical positioning to prevent overlaps
+        // Separate nodes by type for clear visualization
+        const hubs = cy.nodes('[type="hub"]');
+        const links = cy.nodes('[type="link"]');
+        const satellites = cy.nodes('[type="satellite"]');
+        
+        // Calculate viewport center
+        const viewportWidth = document.getElementById('cy').offsetWidth || 1200;
+        const centerX = viewportWidth / 2;
+        const horizontalSpacing = 280; // Space between nodes horizontally
+        
+        // Position hubs in top row (y=150)
+        hubs.forEach((node, idx) => {
+            const totalWidth = (hubs.length - 1) * horizontalSpacing;
+            const startX = centerX - totalWidth / 2;
+            const x = startX + idx * horizontalSpacing;
+            node.position({ x: x, y: 150 });
+        });
+        
+        // Position links in middle row (y=450)
+        links.forEach((node, idx) => {
+            const totalWidth = (links.length - 1) * horizontalSpacing;
+            const startX = centerX - totalWidth / 2;
+            const x = startX + idx * horizontalSpacing;
+            node.position({ x: x, y: 450 });
+        });
+        
+        // Position satellites in bottom rows (y=750+)
+        const satsPerRow = 5; // Max satellites per row
+        satellites.forEach((node, idx) => {
+            const row = Math.floor(idx / satsPerRow);
+            const col = idx % satsPerRow;
+            const satsInThisRow = Math.min(satellites.length - row * satsPerRow, satsPerRow);
+            const totalWidth = (satsInThisRow - 1) * horizontalSpacing;
+            const startX = centerX - totalWidth / 2;
+            const x = startX + col * horizontalSpacing;
+            const y = 750 + row * 220; // Vertical spacing between rows
+            node.position({ x: x, y: y });
+        });
+        
+        console.log(`✅ Positioned: ${hubs.length} hubs, ${links.length} links, ${satellites.length} satellites`);
+        
+        // Apply preset layout (uses fixed positions we just set)
         const layout = cy.layout({
-            name: 'cose',
+            name: 'preset',
             animate: true,
-            animationDuration: 1500,
+            animationDuration: 800,
             animationEasing: 'ease-out',
-            // Physics parameters for better spacing
-            nodeRepulsion: function(node) {
-                // Links need more space due to diamond shape
-                return node.data('type') === 'link' ? 2500000 : 2000000;
-            },
-            nodeOverlap: 200,
-            idealEdgeLength: function(edge) {
-                const sourceType = edge.source().data('type');
-                const targetType = edge.target().data('type');
-                // More space for link connections
-                if (sourceType === 'link' || targetType === 'link') {
-                    return 600;
-                }
-                return 500;
-            },
-            edgeElasticity: 50,
-            nestingFactor: 2,
-            gravity: 0.3,
-            numIter: 3000,
-            initialTemp: 2000,
-            coolingFactor: 0.90,
-            minTemp: 1.0,
-            padding: 200,
-            randomize: false,
-            componentSpacing: 400,
-            // Prevent overlaps
-            avoidOverlap: true,
-            avoidOverlapPadding: 150
+            fit: true,
+            padding: 80
         });
         
         layout.run();
@@ -594,13 +611,13 @@ function visualizeModel(model) {
         // Fit to screen after layout completes
         layout.on('layoutstop', function() {
             setTimeout(() => {
-                cy.fit(80);
-                console.log('✅ Layout complete and fitted to screen');
-            }, 200);
+                cy.fit(60); // More padding for better visibility
+                console.log('✅ Layout complete - hierarchical structure applied');
+            }, 100);
         });
         
         showStatus('generateStatus', 
-            `✅ Visualization complete: ${validNodes.length} nodes, ${edgeArray.length} edges`, 
+            `✅ Visualization complete: ${hubs.length} hubs, ${links.length} links, ${satellites.length} satellites (hierarchical layout)`, 
             'success'
         );
     } catch (error) {
