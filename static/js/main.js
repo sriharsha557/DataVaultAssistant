@@ -85,26 +85,67 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }
         ]
-        // Removed default layout - we'll apply it manually in visualizeModel
     });
 
-    // Add click handler for nodes with detailed information
+    // Enhanced click handler for nodes with reasoning
     cy.on('tap', 'node', function(evt) {
         const node = evt.target;
         const data = node.data();
         
-        let details = `Type: ${data.type}\n`;
-        if (data.businessKey) details += `Business Key: ${data.businessKey}\n`;
-        if (data.parent) details += `Parent: ${data.parent}\n`;
-        if (data.connects && data.connects.length > 0) {
-            details += `Connects: ${data.connects.join(', ')}\n`;
-        }
-        if (data.attributes && data.attributes.length > 0) {
-            details += `Attributes: ${data.attributes.join(', ')}\n`;
-        }
-        if (data.sourceTable) details += `Source Table: ${data.sourceTable}`;
+        let details = '';
         
-        alert(`${data.label}\n\n${details}`);
+        // Type badge
+        const typeColors = {
+            'hub': '#4a90e2',
+            'link': '#66bb6a',
+            'satellite': '#ffa726'
+        };
+        const typeColor = typeColors[data.type] || '#999';
+        
+        // Main classification
+        details += `📌 TYPE: ${data.type.toUpperCase()}\n`;
+        details += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+        
+        // WHY? - Show reasoning
+        if (data.reasoning) {
+            details += `❓ WHY IS THIS A ${data.type.toUpperCase()}?\n`;
+            details += `${data.reasoning}\n\n`;
+        }
+        
+        // Type-specific details
+        if (data.type === 'hub') {
+            if (data.businessKey) {
+                details += `🔑 BUSINESS KEY: ${data.businessKey}\n`;
+            }
+            if (data.attributes && data.attributes.length > 0) {
+                details += `📊 KEY ATTRIBUTES: ${data.attributes.join(', ')}\n`;
+            }
+            details += `\n💡 This is an independent business entity.\n`;
+            details += `It can be queried and analyzed on its own.\n`;
+        }
+        
+        else if (data.type === 'link') {
+            if (data.connects && data.connects.length > 0) {
+                details += `🔗 CONNECTS: ${data.connects.join(' ↔ ')}\n\n`;
+                details += `💡 This represents a many-to-many relationship.\n`;
+                details += `It bridges multiple business entities.\n`;
+            }
+        }
+        
+        else if (data.type === 'satellite') {
+            if (data.parent) {
+                details += `👨‍👩‍👧 PARENT ENTITY: ${data.parent}\n`;
+            }
+            if (data.attributes && data.attributes.length > 0) {
+                details += `📝 ATTRIBUTES: ${data.attributes.join(', ')}\n`;
+            }
+            details += `\n💡 This describes a parent entity.\n`;
+            details += `It provides context and detail, not independent data.\n`;
+        }
+        
+        details += `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
+        
+        showNodeDetails(data.label, data.type, details);
     });
 
     // Highlight connected nodes on hover
@@ -119,7 +160,120 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     checkConfig();
+    injectModalStyles();
 });
+
+// Inject modal styles
+function injectModalStyles() {
+    const style = document.createElement('style');
+    style.textContent = `
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0, 0, 0, 0.5);
+            animation: fadeIn 0.3s ease;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        
+        .modal-content {
+            background-color: #f9f9f9;
+            margin: 5% auto;
+            padding: 30px;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 650px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            max-height: 70vh;
+            overflow-y: auto;
+        }
+        
+        .node-details-modal h2 {
+            margin-top: 0;
+            padding-bottom: 15px;
+            font-size: 24px;
+            color: #333;
+            border-bottom: 4px solid #4a90e2;
+        }
+        
+        .node-details-modal #nodeDetailsBody {
+            color: #555;
+            background: #fafafa;
+            padding: 15px;
+            border-left: 4px solid #ddd;
+            border-radius: 4px;
+            font-size: 13px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        
+        .close {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: color 0.3s;
+        }
+        
+        .close:hover,
+        .close:focus {
+            color: #000;
+        }
+    `;
+    document.head.appendChild(style);
+}
+
+// Show node details modal
+function showNodeDetails(label, type, details) {
+    let modal = document.getElementById('nodeDetailsModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'nodeDetailsModal';
+        modal.className = 'modal';
+        modal.innerHTML = `
+            <div class="modal-content node-details-modal">
+                <span class="close">&times;</span>
+                <h2 id="nodeDetailsTitle"></h2>
+                <div id="nodeDetailsBody"></div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        
+        modal.querySelector('.close').addEventListener('click', function() {
+            modal.style.display = 'none';
+        });
+        
+        window.addEventListener('click', function(event) {
+            if (event.target === modal) {
+                modal.style.display = 'none';
+            }
+        });
+    }
+    
+    const typeColors = {
+        'hub': '#4a90e2',
+        'link': '#66bb6a',
+        'satellite': '#ffa726'
+    };
+    
+    modal.querySelector('#nodeDetailsTitle').textContent = label;
+    modal.querySelector('#nodeDetailsTitle').style.borderBottomColor = typeColors[type];
+    modal.querySelector('#nodeDetailsBody').textContent = details;
+    
+    modal.style.display = 'block';
+}
 
 // Safe JSON parsing helper
 async function parseJSON(response) {
@@ -154,7 +308,6 @@ async function checkConfig() {
         document.getElementById('groqStatus').textContent = data.groq_configured ? '✅ Configured' : '❌ Not Set';
         document.getElementById('groqStatus').className = `status-value ${data.groq_configured ? 'success' : 'error'}`;
         
-        // Show database info
         if (data.database) {
             console.log(`Database: ${data.database}`);
         }
@@ -240,7 +393,6 @@ async function uploadSource() {
             currentOcrId = data.ocr_id;
             fullOcrText = data.full_text || data.extracted_text;
             
-            // Show preview modal with editable textarea
             document.getElementById('ocrPreviewText').value = fullOcrText;
             document.getElementById('ocrPreviewModal').style.display = 'block';
             
@@ -291,7 +443,6 @@ async function submitManualSchema() {
             currentOcrId = data.ocr_id;
             fullOcrText = schemaText;
             
-            // Show preview modal with editable textarea
             document.getElementById('ocrPreviewText').value = fullOcrText;
             document.getElementById('ocrPreviewModal').style.display = 'block';
         } else {
@@ -314,7 +465,6 @@ function closeOcrPreview() {
 
 // Confirm OCR and enable generation
 async function confirmOcrAndGenerate() {
-    // Get the edited text from textarea
     const editedText = document.getElementById('ocrPreviewText').value.trim();
     
     if (!editedText) {
@@ -322,7 +472,6 @@ async function confirmOcrAndGenerate() {
         return;
     }
     
-    // If text was edited, update it in the database
     if (editedText !== fullOcrText) {
         console.log('📝 Text was edited, updating in database...');
         
@@ -346,7 +495,6 @@ async function confirmOcrAndGenerate() {
             }
         } catch (error) {
             console.error('Error updating text:', error);
-            // Continue anyway - user can still generate with edited text
         }
     }
     
@@ -403,7 +551,7 @@ async function generateModel() {
     }
 }
 
-// FIXED visualizeModel - Proper 3-layer hierarchy
+// Visualize model with 3-layer hierarchy
 function visualizeModel(model) {
     cy.elements().remove();
     
@@ -415,7 +563,6 @@ function visualizeModel(model) {
     try {
         console.log('🎨 Starting visualization...', model);
         
-        // Validate nodes
         const nodeIds = new Set();
         const validNodes = [];
         
@@ -429,14 +576,12 @@ function visualizeModel(model) {
         
         console.log(`✅ Validated ${validNodes.length} nodes`);
         
-        // Separate by type
         const hubNodes = validNodes.filter(n => n.type === 'hub');
         const linkNodes = validNodes.filter(n => n.type === 'link');
         const satelliteNodes = validNodes.filter(n => n.type === 'satellite');
         
         console.log(`📊 ${hubNodes.length} hubs, ${linkNodes.length} links, ${satelliteNodes.length} satellites`);
         
-        // Add nodes to Cytoscape
         validNodes.forEach(node => {
             const borderColor = node.type === 'hub' ? '#2c5aa0' : 
                                node.type === 'link' ? '#43a047' : '#f57c00';
@@ -451,13 +596,12 @@ function visualizeModel(model) {
                     parent: node.parent || '',
                     connects: node.connects || [],
                     attributes: node.attributes || [],
-                    sourceTable: node.sourceTable || '',
+                    reasoning: node.reasoning || '',
                     borderColor: borderColor
                 }
             });
         });
         
-        // Add edges
         const edgeArray = [];
         const allEdges = new Set();
         
@@ -489,7 +633,7 @@ function visualizeModel(model) {
         
         console.log(`✅ Added ${edgeArray.length} edges`);
         
-        // === POSITION NODES IN 3 LAYERS ===
+        // Position nodes in 3 layers
         const hubs = cy.nodes('[type="hub"]');
         const links = cy.nodes('[type="link"]');
         const satellites = cy.nodes('[type="satellite"]');
@@ -551,7 +695,6 @@ function visualizeModel(model) {
         
         console.log(`✅ Positioned: Hubs at y=150, Links at y=${linkY}, Satellites at y=${satY}`);
         
-        // Apply preset layout (uses our positions)
         cy.layout({
             name: 'preset',
             fit: true,
@@ -561,7 +704,7 @@ function visualizeModel(model) {
         console.log('✅ Layout complete!');
         
         showStatus('generateStatus', 
-            `✅ Data Vault visualization complete! ${hubs.length} hubs (top), ${links.length} links (middle), ${satellites.length} satellites (bottom)`, 
+            `✅ Data Vault visualization complete! ${hubs.length} hubs (blue, top), ${links.length} links (green, middle), ${satellites.length} satellites (orange, bottom)`, 
             'success'
         );
         
@@ -582,13 +725,12 @@ function updateStats(model) {
     document.getElementById('satCount').textContent = satellites;
 }
 
-// Canvas controls - FIXED to use proper layout
+// Canvas controls
 function resetLayout() {
     if (!currentModel) {
         alert('No model to reset. Please generate a model first.');
         return;
     }
-    // Just re-visualize the current model
     visualizeModel(currentModel);
 }
 
@@ -623,12 +765,13 @@ function exportCSV() {
         return;
     }
     
-    let csv = 'Entity,Type,Parent,BusinessKey,Connects,Attributes\n';
+    let csv = 'Entity,Type,Parent,BusinessKey,Connects,Attributes,Reasoning\n';
     
     currentModel.nodes.forEach(node => {
         const connects = (node.connects || []).join('; ');
         const attributes = (node.attributes || []).join('; ');
-        csv += `"${node.id}","${node.type}","${node.parent || ''}","${node.businessKey || ''}","${connects}","${attributes}"\n`;
+        const reasoning = (node.reasoning || '').replace(/"/g, '""');
+        csv += `"${node.id}","${node.type}","${node.parent || ''}","${node.businessKey || ''}","${connects}","${attributes}","${reasoning}"\n`;
     });
     
     downloadFile(csv, 'data_vault_model.csv', 'text/csv');
