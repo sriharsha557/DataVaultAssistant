@@ -196,32 +196,74 @@ def generate_dv_model(ocr_text, grounded=False, knowledge_content=''):
     if not GROQ_API_KEY:
         raise ValueError("GROQ_API_KEY not configured")
     
-    system_prompt = "You are an expert Data Vault 2.1 modeler."
+    system_prompt = "You are an expert Data Vault 2.1 modeler with deep understanding of hub, link, and satellite structures."
     if grounded and knowledge_content:
         system_prompt = f"""You are a Data Vault 2.1 expert. Use these guidelines:
 {knowledge_content[:2000]}"""
     
-    user_prompt = f"""Convert this schema to Data Vault 2.1:
+    # IMPROVED PROMPT - More explicit about Hub vs Link identification
+    user_prompt = f"""Analyze this source schema and convert it to Data Vault 2.1 model.
 
+SOURCE SCHEMA:
 {ocr_text[:3000]}
 
-Return ONLY valid JSON (no markdown):
+CRITICAL RULES FOR DATA VAULT 2.1:
+
+1. HUBS = Core business entities (main tables/nouns)
+   - These are the PRIMARY entities in your business
+   - Examples: Customer, Order, Product, Actor, Film, Store, City, Country, Inventory
+   - Contain ONLY the business key column
+   - Name format: Hub_EntityName (e.g., Hub_Customer, Hub_Actor, Hub_Film)
+
+2. LINKS = Relationships BETWEEN two or more Hubs (association/junction tables)
+   - These represent many-to-many relationships or associations
+   - Connect 2 or more hubs together
+   - Examples: Link_Actor_Film (connects Hub_Actor ↔ Hub_Film)
+   - Examples: Link_Film_Category (connects Hub_Film ↔ Hub_Category)
+   - Name format: Link_Entity1_Entity2 (e.g., Link_Customer_Order, Link_Actor_Film)
+   - Must have "connects" array listing the Hub IDs it connects
+
+3. SATELLITES = Descriptive attributes (non-key columns)
+   - Contains all descriptive/contextual data
+   - Must have a parent Hub or Link
+   - Examples: Sat_Customer_Details, Sat_Film_Details
+   - Name format: Sat_EntityName (e.g., Sat_Customer, Sat_Actor)
+
+IDENTIFICATION LOGIC:
+- If it's a MAIN TABLE with a primary key → Create a HUB
+- If it's a JUNCTION/ASSOCIATION table connecting two entities → Create a LINK
+- If it's COLUMNS/ATTRIBUTES of an entity → Create SATELLITES attached to the hub
+
+EDGE RULES:
+- Hub → Satellite: Draw edge FROM hub TO its satellite
+- Hub → Link: Draw edge FROM hub TO the link (for each hub the link connects)
+
+OUTPUT FORMAT (valid JSON only, NO markdown, NO code blocks, NO explanations):
 {{
   "nodes": [
-    {{"id": "Hub_Customer", "type": "hub", "businessKey": "customer_id", "attributes": ["customer_id"]}},
-    {{"id": "Sat_Customer", "type": "satellite", "parent": "Hub_Customer", "attributes": ["name", "email"]}},
-    {{"id": "Link_Customer_Order", "type": "link", "connects": ["Hub_Customer", "Hub_Order"]}}
+    {{"id": "Hub_Actor", "type": "hub", "businessKey": "actor_id", "attributes": ["actor_id"]}},
+    {{"id": "Hub_Film", "type": "hub", "businessKey": "film_id", "attributes": ["film_id"]}},
+    {{"id": "Link_Actor_Film", "type": "link", "connects": ["Hub_Actor", "Hub_Film"]}},
+    {{"id": "Sat_Actor", "type": "satellite", "parent": "Hub_Actor", "attributes": ["first_name", "last_name", "last_update"]}},
+    {{"id": "Sat_Film", "type": "satellite", "parent": "Hub_Film", "attributes": ["title", "description", "release_year", "length"]}}
   ],
   "edges": [
-    {{"from": "Hub_Customer", "to": "Sat_Customer"}},
-    {{"from": "Hub_Customer", "to": "Link_Customer_Order"}}
+    {{"from": "Hub_Actor", "to": "Link_Actor_Film"}},
+    {{"from": "Hub_Film", "to": "Link_Actor_Film"}},
+    {{"from": "Hub_Actor", "to": "Sat_Actor"}},
+    {{"from": "Hub_Film", "to": "Sat_Film"}}
   ]
 }}
 
-RULES:
-- Every satellite needs edge to parent
-- Every link needs edges to all hubs
-- Use "from" and "to" (not source/target)"""
+IMPORTANT REMINDERS:
+- Every main entity (table with PK) should become a HUB
+- Every relationship/junction table should become a LINK
+- Every set of descriptive columns should become a SATELLITE
+- Hubs connect TO Links (Hub → Link direction)
+- Hubs connect TO Satellites (Hub → Satellite direction)
+- Links must have "connects" array with Hub IDs
+
+Now analyze the schema above and generate the Data Vault model as JSON."""
     
     try:
         print(f"🤖 Calling GROQ...", flush=True)
@@ -239,7 +281,7 @@ RULES:
                     {'role': 'user', 'content': user_prompt}
                 ],
                 'temperature': 0.1,
-                'max_tokens': 3000
+                'max_tokens': 4000
             },
             timeout=60
         )
