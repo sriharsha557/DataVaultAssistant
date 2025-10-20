@@ -84,24 +84,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     'target-arrow-color': '#ff4081'
                 }
             }
-        ],
-        
-        layout: {
-            name: 'cose',
-            animate: true,
-            animationDuration: 1000,
-            nodeRepulsion: 2000000,
-            idealEdgeLength: 500,
-            edgeElasticity: 50,
-            nestingFactor: 2,
-            gravity: 0.3,
-            numIter: 3000,
-            initialTemp: 2000,
-            coolingFactor: 0.90,
-            minTemp: 1.0,
-            avoidOverlap: true,
-            avoidOverlapPadding: 150
-        }
+        ]
+        // Removed default layout - we'll apply it manually in visualizeModel
     });
 
     // Add click handler for nodes with detailed information
@@ -419,8 +403,7 @@ async function generateModel() {
     }
 }
 
-// Complete visualizeModel function - paste this to replace the entire function in static/js/main.js
-
+// FIXED visualizeModel - Proper 3-layer hierarchy
 function visualizeModel(model) {
     cy.elements().remove();
     
@@ -432,39 +415,26 @@ function visualizeModel(model) {
     try {
         console.log('🎨 Starting visualization...', model);
         
-        // Validate and sanitize nodes
+        // Validate nodes
         const nodeIds = new Set();
         const validNodes = [];
-        const nodeMap = new Map();
         
         model.nodes.forEach(node => {
-            if (!node.id) {
-                console.warn('Node missing ID:', node);
-                return;
-            }
-            
+            if (!node.id) return;
             const sanitizedId = String(node.id).trim();
-            if (nodeIds.has(sanitizedId)) {
-                console.warn('Duplicate node ID:', sanitizedId);
-                return;
-            }
-            
+            if (nodeIds.has(sanitizedId)) return;
             nodeIds.add(sanitizedId);
-            validNodes.push({
-                ...node,
-                id: sanitizedId
-            });
-            nodeMap.set(sanitizedId, node);
+            validNodes.push({ ...node, id: sanitizedId });
         });
         
         console.log(`✅ Validated ${validNodes.length} nodes`);
         
-        // Separate nodes by type BEFORE adding to Cytoscape
+        // Separate by type
         const hubNodes = validNodes.filter(n => n.type === 'hub');
         const linkNodes = validNodes.filter(n => n.type === 'link');
         const satelliteNodes = validNodes.filter(n => n.type === 'satellite');
         
-        console.log(`📊 Node breakdown: ${hubNodes.length} hubs, ${linkNodes.length} links, ${satelliteNodes.length} satellites`);
+        console.log(`📊 ${hubNodes.length} hubs, ${linkNodes.length} links, ${satelliteNodes.length} satellites`);
         
         // Add nodes to Cytoscape
         validNodes.forEach(node => {
@@ -487,13 +457,10 @@ function visualizeModel(model) {
             });
         });
         
-        console.log(`✅ Added ${validNodes.length} nodes to visualization`);
-        
-        // Collect all edges (from model + auto-generated)
-        const allEdges = new Set();
+        // Add edges
         const edgeArray = [];
+        const allEdges = new Set();
         
-        // Add edges from model
         if (model.edges && Array.isArray(model.edges)) {
             model.edges.forEach(edge => {
                 const sourceId = String(edge.from || edge.source || '').trim();
@@ -509,104 +476,48 @@ function visualizeModel(model) {
             });
         }
         
-        console.log(`✅ Collected ${edgeArray.length} edges from model`);
-        
-        // Auto-generate missing edges for satellites
-        validNodes.forEach(node => {
-            if (node.type === 'satellite' && node.parent) {
-                const parentId = String(node.parent).trim();
-                if (nodeIds.has(parentId)) {
-                    const edgeKey = `${parentId}->${node.id}`;
-                    if (!allEdges.has(edgeKey)) {
-                        allEdges.add(edgeKey);
-                        edgeArray.push({ from: parentId, to: node.id });
-                        console.log(`🔗 Auto-created edge: ${parentId} -> ${node.id}`);
-                    }
-                }
-            }
-            
-            // Auto-generate edges for links
-            if (node.type === 'link' && node.connects && Array.isArray(node.connects)) {
-                node.connects.forEach(hubId => {
-                    const sanitizedHubId = String(hubId).trim();
-                    if (nodeIds.has(sanitizedHubId)) {
-                        const edgeKey = `${sanitizedHubId}->${node.id}`;
-                        if (!allEdges.has(edgeKey)) {
-                            allEdges.add(edgeKey);
-                            edgeArray.push({ from: sanitizedHubId, to: node.id });
-                            console.log(`🔗 Auto-created edge: ${sanitizedHubId} -> ${node.id}`);
-                        }
-                    }
-                });
-            }
-        });
-        
-        console.log(`✅ Total edges after auto-generation: ${edgeArray.length}`);
-        
-        // Add all edges to Cytoscape
         edgeArray.forEach((edge, idx) => {
-            try {
-                cy.add({
-                    group: 'edges',
-                    data: {
-                        id: `edge-${idx}`,
-                        source: edge.from,
-                        target: edge.to
-                    }
-                });
-            } catch (e) {
-                console.warn(`Failed to add edge ${edge.from} -> ${edge.to}:`, e);
-            }
+            cy.add({
+                group: 'edges',
+                data: {
+                    id: `edge-${idx}`,
+                    source: edge.from,
+                    target: edge.to
+                }
+            });
         });
         
-        console.log(`✅ Added ${edgeArray.length} edges to visualization`);
+        console.log(`✅ Added ${edgeArray.length} edges`);
         
-        // ====================================================================
-        // MAXIMUM SEPARATION LAYOUT - NO OVERLAPPING
-        // ====================================================================
-        
+        // === POSITION NODES IN 3 LAYERS ===
         const hubs = cy.nodes('[type="hub"]');
         const links = cy.nodes('[type="link"]');
         const satellites = cy.nodes('[type="satellite"]');
         
-        console.log(`🎯 Positioning with MAXIMUM separation:`);
-        console.log(`   ${hubs.length} hubs, ${links.length} links, ${satellites.length} satellites`);
-        
-        // Calculate viewport dimensions
         const viewportWidth = document.getElementById('cy').offsetWidth || 1400;
         const centerX = viewportWidth / 2;
+        const horizontalSpacing = 300;
+        const verticalGap = 400;
         
-        // CRITICAL: Much larger spacing to prevent any overlaps
-        const horizontalSpacing = 350;  // Wide horizontal gaps
-        const largeVerticalGap = 500;   // HUGE vertical gaps between layers
-        
-        // ====================================================================
-        // LAYER 1: HUBS at TOP (y = 100)
-        // ====================================================================
-        const hubY = 100;
+        // Layer 1: HUBS at TOP
         if (hubs.length > 0) {
-            const hubsPerRow = 6;  // Max hubs per row
+            const hubsPerRow = 5;
             hubs.forEach((node, idx) => {
                 const row = Math.floor(idx / hubsPerRow);
                 const col = idx % hubsPerRow;
                 const hubsInRow = Math.min(hubs.length - row * hubsPerRow, hubsPerRow);
                 const totalWidth = (hubsInRow - 1) * horizontalSpacing;
-                const startX = centerX - totalWidth / 2;
-                const x = startX + col * horizontalSpacing;
-                const y = hubY + row * 250;  // Space between hub rows if multiple
-                node.position({ x: x, y: y });
-                console.log(`📍 HUB: ${node.id()} → (${x}, ${y})`);
+                const x = centerX - totalWidth / 2 + col * horizontalSpacing;
+                const y = 150 + row * 200;
+                node.position({ x, y });
             });
         }
         
-        // Calculate the bottom of hub layer
-        const hubRowCount = Math.ceil(hubs.length / 6);
-        const hubLayerBottom = hubY + (hubRowCount - 1) * 250;
+        const hubRowCount = Math.ceil(hubs.length / 5);
+        const hubBottom = 150 + (hubRowCount - 1) * 200;
         
-        // ====================================================================
-        // LAYER 2: LINKS in MIDDLE
-        // ====================================================================
-        const linkY = hubLayerBottom + largeVerticalGap;  // FAR below hubs
+        // Layer 2: LINKS in MIDDLE
+        const linkY = hubBottom + verticalGap;
         if (links.length > 0) {
             const linksPerRow = 5;
             links.forEach((node, idx) => {
@@ -614,62 +525,43 @@ function visualizeModel(model) {
                 const col = idx % linksPerRow;
                 const linksInRow = Math.min(links.length - row * linksPerRow, linksPerRow);
                 const totalWidth = (linksInRow - 1) * horizontalSpacing;
-                const startX = centerX - totalWidth / 2;
-                const x = startX + col * horizontalSpacing;
-                const y = linkY + row * 280;  // Space between link rows
-                node.position({ x: x, y: y });
-                console.log(`📍 LINK: ${node.id()} → (${x}, ${y})`);
+                const x = centerX - totalWidth / 2 + col * horizontalSpacing;
+                const y = linkY + row * 220;
+                node.position({ x, y });
             });
         }
         
-        // Calculate the bottom of link layer
         const linkRowCount = Math.ceil(links.length / 5);
-        const linkLayerBottom = linkY + (linkRowCount - 1) * 280;
+        const linkBottom = linkY + (linkRowCount - 1) * 220;
         
-        // ====================================================================
-        // LAYER 3: SATELLITES at BOTTOM
-        // ====================================================================
-        const satelliteY = linkLayerBottom + largeVerticalGap;  // FAR below links
+        // Layer 3: SATELLITES at BOTTOM
+        const satY = linkBottom + verticalGap;
         if (satellites.length > 0) {
-            const satsPerRow = 6;
+            const satsPerRow = 5;
             satellites.forEach((node, idx) => {
                 const row = Math.floor(idx / satsPerRow);
                 const col = idx % satsPerRow;
                 const satsInRow = Math.min(satellites.length - row * satsPerRow, satsPerRow);
                 const totalWidth = (satsInRow - 1) * horizontalSpacing;
-                const startX = centerX - totalWidth / 2;
-                const x = startX + col * horizontalSpacing;
-                const y = satelliteY + row * 250;  // Space between satellite rows
-                node.position({ x: x, y: y });
-                console.log(`📍 SATELLITE: ${node.id()} → (${x}, ${y})`);
+                const x = centerX - totalWidth / 2 + col * horizontalSpacing;
+                const y = satY + row * 200;
+                node.position({ x, y });
             });
         }
         
-        console.log('✅ All nodes positioned with MAXIMUM separation');
-        console.log(`   Hub layer: y=${hubY} to ${hubLayerBottom}`);
-        console.log(`   Link layer: y=${linkY} to ${linkLayerBottom}`);
-        console.log(`   Satellite layer: y=${satelliteY}+`);
-        console.log(`   Gap between layers: ${largeVerticalGap}px`);
+        console.log(`✅ Positioned: Hubs at y=150, Links at y=${linkY}, Satellites at y=${satY}`);
         
-        // Apply preset layout - this respects our exact positions
-        const layout = cy.layout({
+        // Apply preset layout (uses our positions)
+        cy.layout({
             name: 'preset',
-            fit: false,  // CRITICAL: Don't auto-fit
-            padding: 80
-        });
+            fit: true,
+            padding: 100
+        }).run();
         
-        layout.run();
-        
-        // Set initial zoom and position WITHOUT fitting
-        setTimeout(() => {
-            cy.zoom(0.6);  // Fixed zoom to see spacing clearly
-            cy.pan({ x: viewportWidth / 2, y: 200 }); // Start at top
-            console.log('✅ Layout complete - Scroll down to see Links and Satellites!');
-            console.log('💡 Use mouse wheel to zoom, drag to pan, or click "Fit to Screen" button');
-        }, 100);
+        console.log('✅ Layout complete!');
         
         showStatus('generateStatus', 
-            `✅ Visualization complete! Hubs at top, Links in middle, Satellites at bottom. Scroll down or use controls to navigate.`, 
+            `✅ Data Vault visualization complete! ${hubs.length} hubs (top), ${links.length} links (middle), ${satellites.length} satellites (bottom)`, 
             'success'
         );
         
@@ -690,42 +582,27 @@ function updateStats(model) {
     document.getElementById('satCount').textContent = satellites;
 }
 
-// Canvas controls
+// Canvas controls - FIXED to use proper layout
 function resetLayout() {
-    if (cy.elements().length > 0) {
-        const layout = cy.layout({
-            name: 'cose',
-            animate: true,
-            animationDuration: 1500,
-            nodeRepulsion: function(node) {
-                return node.data('type') === 'link' ? 2500000 : 2000000;
-            },
-            idealEdgeLength: 500,
-            edgeElasticity: 50,
-            gravity: 0.3,
-            numIter: 3000,
-            avoidOverlap: true,
-            avoidOverlapPadding: 150
-        });
-        layout.run();
-        
-        layout.on('layoutstop', function() {
-            setTimeout(() => cy.fit(80), 200);
-        });
+    if (!currentModel) {
+        alert('No model to reset. Please generate a model first.');
+        return;
     }
+    // Just re-visualize the current model
+    visualizeModel(currentModel);
 }
 
 function fitToScreen() {
-    cy.fit(80);
+    cy.fit(100);
 }
 
 function zoomIn() {
-    cy.zoom(cy.zoom() * 1.3);
+    cy.zoom(cy.zoom() * 1.2);
     cy.center();
 }
 
 function zoomOut() {
-    cy.zoom(cy.zoom() * 0.7);
+    cy.zoom(cy.zoom() * 0.8);
     cy.center();
 }
 
@@ -746,12 +623,12 @@ function exportCSV() {
         return;
     }
     
-    let csv = 'Entity,Type,Parent,BusinessKey,Connects,Attributes,SourceTable\n';
+    let csv = 'Entity,Type,Parent,BusinessKey,Connects,Attributes\n';
     
     currentModel.nodes.forEach(node => {
         const connects = (node.connects || []).join('; ');
         const attributes = (node.attributes || []).join('; ');
-        csv += `"${node.id}","${node.type}","${node.parent || ''}","${node.businessKey || ''}","${connects}","${attributes}","${node.sourceTable || ''}"\n`;
+        csv += `"${node.id}","${node.type}","${node.parent || ''}","${node.businessKey || ''}","${connects}","${attributes}"\n`;
     });
     
     downloadFile(csv, 'data_vault_model.csv', 'text/csv');
@@ -763,11 +640,10 @@ function exportDrawIO() {
         return;
     }
     
-    // Enhanced Draw.io XML with better positioning
     let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
-    xml += '<mxfile host="app.diagrams.net" modified="2024-01-01T00:00:00.000Z" agent="DataVault Assistant" version="21.0.0">\n';
-    xml += '  <diagram name="Data Vault Model" id="dv-model">\n';
-    xml += '    <mxGraphModel dx="1434" dy="844" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1200">\n';
+    xml += '<mxfile host="app.diagrams.net">\n';
+    xml += '  <diagram name="Data Vault Model">\n';
+    xml += '    <mxGraphModel>\n';
     xml += '      <root>\n';
     xml += '        <mxCell id="0"/>\n';
     xml += '        <mxCell id="1" parent="0"/>\n';
@@ -775,64 +651,47 @@ function exportDrawIO() {
     let nodeId = 2;
     const nodeMap = {};
     
-    // Organize nodes by type for better layout
     const hubs = currentModel.nodes.filter(n => n.type === 'hub');
     const links = currentModel.nodes.filter(n => n.type === 'link');
     const satellites = currentModel.nodes.filter(n => n.type === 'satellite');
     
-    // Position hubs
     hubs.forEach((node, idx) => {
-        const x = 100 + (idx % 4) * 300;
-        const y = 100 + Math.floor(idx / 4) * 250;
-        const color = '#4a90e2';
-        
+        const x = 100 + (idx % 4) * 280;
+        const y = 100 + Math.floor(idx / 4) * 200;
         nodeMap[node.id] = nodeId;
-        
-        xml += `        <mxCell id="${nodeId}" value="${node.id}" style="rounded=1;whiteSpace=wrap;html=1;fillColor=${color};strokeColor=#000000;strokeWidth=3;fontColor=#ffffff;fontSize=12;fontStyle=1;" vertex="1" parent="1">\n`;
+        xml += `        <mxCell id="${nodeId}" value="${node.id}" style="rounded=1;fillColor=#4a90e2;strokeColor=#2c5aa0;fontColor=#ffffff;" vertex="1" parent="1">\n`;
         xml += `          <mxGeometry x="${x}" y="${y}" width="140" height="70" as="geometry"/>\n`;
         xml += `        </mxCell>\n`;
-        
         nodeId++;
     });
     
-    // Position links
     links.forEach((node, idx) => {
-        const x = 150 + (idx % 4) * 300;
-        const y = 400 + Math.floor(idx / 4) * 250;
-        const color = '#66bb6a';
-        
+        const x = 150 + (idx % 4) * 280;
+        const y = 400 + Math.floor(idx / 4) * 220;
         nodeMap[node.id] = nodeId;
-        
-        xml += `        <mxCell id="${nodeId}" value="${node.id}" style="rhombus;whiteSpace=wrap;html=1;fillColor=${color};strokeColor=#000000;strokeWidth=3;fontColor=#ffffff;fontSize=12;fontStyle=1;" vertex="1" parent="1">\n`;
+        xml += `        <mxCell id="${nodeId}" value="${node.id}" style="rhombus;fillColor=#66bb6a;strokeColor=#43a047;fontColor=#ffffff;" vertex="1" parent="1">\n`;
         xml += `          <mxGeometry x="${x}" y="${y}" width="120" height="120" as="geometry"/>\n`;
         xml += `        </mxCell>\n`;
-        
         nodeId++;
     });
     
-    // Position satellites
     satellites.forEach((node, idx) => {
-        const x = 100 + (idx % 5) * 280;
-        const y = 700 + Math.floor(idx / 5) * 200;
-        const color = '#ffa726';
-        
+        const x = 100 + (idx % 5) * 260;
+        const y = 700 + Math.floor(idx / 5) * 180;
         nodeMap[node.id] = nodeId;
-        
-        xml += `        <mxCell id="${nodeId}" value="${node.id}" style="rounded=1;whiteSpace=wrap;html=1;fillColor=${color};strokeColor=#000000;strokeWidth=3;fontColor=#ffffff;fontSize=11;" vertex="1" parent="1">\n`;
+        xml += `        <mxCell id="${nodeId}" value="${node.id}" style="rounded=1;fillColor=#ffa726;strokeColor=#f57c00;fontColor=#ffffff;" vertex="1" parent="1">\n`;
         xml += `          <mxGeometry x="${x}" y="${y}" width="140" height="70" as="geometry"/>\n`;
         xml += `        </mxCell>\n`;
-        
         nodeId++;
     });
     
-    // Add edges
     if (currentModel.edges) {
         currentModel.edges.forEach(edge => {
             const sourceId = nodeMap[edge.from || edge.source];
             const targetId = nodeMap[edge.to || edge.target];
             
             if (sourceId && targetId) {
-                xml += `        <mxCell id="${nodeId}" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#999999;" edge="1" parent="1" source="${sourceId}" target="${targetId}">\n`;
+                xml += `        <mxCell id="${nodeId}" style="edgeStyle=orthogonalEdgeStyle;rounded=1;" edge="1" parent="1" source="${sourceId}" target="${targetId}">\n`;
                 xml += `          <mxGeometry relative="1" as="geometry"/>\n`;
                 xml += `        </mxCell>\n`;
                 nodeId++;
@@ -848,7 +707,6 @@ function exportDrawIO() {
     downloadFile(xml, 'data_vault_model.drawio', 'application/xml');
 }
 
-// Helper function to download files
 function downloadFile(content, filename, mimeType) {
     const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
@@ -861,11 +719,9 @@ function downloadFile(content, filename, mimeType) {
     URL.revokeObjectURL(url);
 }
 
-// Helper function to show status messages
 function showStatus(elementId, message, type) {
     const element = document.getElementById(elementId);
     
-    // Create or get status message element
     let statusEl = element.querySelector('.status-message');
     if (!statusEl) {
         statusEl = document.createElement('div');
@@ -873,13 +729,11 @@ function showStatus(elementId, message, type) {
         element.appendChild(statusEl);
     }
     
-    // Handle multi-line messages
     statusEl.textContent = message;
     statusEl.className = `status-message ${type}`;
     statusEl.style.display = 'block';
     statusEl.style.whiteSpace = 'pre-wrap';
     
-    // Auto-hide success messages after 8 seconds
     if (type === 'success') {
         setTimeout(() => {
             statusEl.style.display = 'none';
