@@ -419,8 +419,7 @@ async function generateModel() {
     }
 }
 
-// Replace the visualizeModel function in static/js/main.js with this version
-// This creates MAXIMUM separation between Hubs, Links, and Satellites
+// Complete visualizeModel function - paste this to replace the entire function in static/js/main.js
 
 function visualizeModel(model) {
     cy.elements().remove();
@@ -655,23 +654,22 @@ function visualizeModel(model) {
         // Apply preset layout - this respects our exact positions
         const layout = cy.layout({
             name: 'preset',
-            fit: true,
+            fit: false,  // CRITICAL: Don't auto-fit
             padding: 80
         });
         
         layout.run();
         
-        // Don't auto-fit - let user see proper spacing
-        // Users can use the "Fit to Screen" button if needed
+        // Set initial zoom and position WITHOUT fitting
         setTimeout(() => {
-            // Center on hubs (top layer) with proper zoom
-            cy.zoom(0.7);  // Fixed zoom level to show spacing
-            cy.center(hubs);
-            console.log('✅ Layout complete - No overlapping! Use Fit to Screen button to adjust view.');
+            cy.zoom(0.6);  // Fixed zoom to see spacing clearly
+            cy.pan({ x: viewportWidth / 2, y: 200 }); // Start at top
+            console.log('✅ Layout complete - Scroll down to see Links and Satellites!');
+            console.log('💡 Use mouse wheel to zoom, drag to pan, or click "Fit to Screen" button');
         }, 100);
         
         showStatus('generateStatus', 
-            `✅ Visualization complete with maximum separation: ${hubs.length} hubs, ${links.length} links, ${satellites.length} satellites`, 
+            `✅ Visualization complete! Hubs at top, Links in middle, Satellites at bottom. Scroll down or use controls to navigate.`, 
             'success'
         );
         
