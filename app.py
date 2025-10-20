@@ -21,8 +21,8 @@ GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
 TURSO_URL = os.getenv('TURSO_DATABASE_URL', '')
 TURSO_TOKEN = os.getenv('TURSO_AUTH_TOKEN', '')
 
-# Force SQLite for stability - Turso causing worker kills
-USE_TURSO = False  # Disabled due to memory issues on Render free tier
+# Force SQLite for stability
+USE_TURSO = False
 if TURSO_URL and TURSO_TOKEN:
     print("⚠️ Turso credentials found but disabled (use SQLite for stability)", flush=True)
 
@@ -47,11 +47,10 @@ def get_sqlite_connection():
                 isolation_level='DEFERRED'
             )
             _local.conn.row_factory = sqlite3.Row
-            # WAL mode for better concurrency
             _local.conn.execute('PRAGMA journal_mode=WAL')
             _local.conn.execute('PRAGMA busy_timeout=30000')
-            _local.conn.execute('PRAGMA synchronous=NORMAL')  # Faster writes
-            _local.conn.execute('PRAGMA cache_size=10000')    # More memory for cache
+            _local.conn.execute('PRAGMA synchronous=NORMAL')
+            _local.conn.execute('PRAGMA cache_size=10000')
             print(f"✅ SQLite connection created for thread {threading.current_thread().name}", flush=True)
         except Exception as e:
             print(f"❌ SQLite connection error: {e}", flush=True)
@@ -71,7 +70,7 @@ def init_db():
             return True
         
         try:
-            print("🔄 Initializing database...", flush=True)
+            print("📝 Initializing database...", flush=True)
             conn = get_sqlite_connection()
             cursor = conn.cursor()
             
@@ -173,7 +172,7 @@ def extract_text_ocr(filepath):
         raise Exception(f"OCR error: {str(e)}")
 
 def validate_dv_model(model):
-    """Validate model structure"""
+    """Validate model structure and naming conventions"""
     if not isinstance(model, dict):
         raise ValueError("Model must be dict")
     if 'nodes' not in model or not isinstance(model['nodes'], list):
@@ -187,12 +186,28 @@ def validate_dv_model(model):
             raise ValueError("All nodes need 'id'")
         if 'type' not in node:
             raise ValueError(f"Node {node['id']} needs 'type'")
-        node_ids.add(node['id'])
+        
+        node_type = node['type']
+        node_id = node['id']
+        
+        # Enforce naming convention
+        if node_type == 'hub' and not node_id.startswith('Hub_'):
+            raise ValueError(f"Hub must be named 'Hub_*', got: {node_id}")
+        if node_type == 'link' and not node_id.startswith('Link_'):
+            raise ValueError(f"Link must be named 'Link_*', got: {node_id}")
+        if node_type == 'satellite' and not node_id.startswith('Sat_'):
+            raise ValueError(f"Satellite must be named 'Sat_*', got: {node_id}")
+        
+        # Check for reasoning
+        if 'reasoning' not in node or not node['reasoning']:
+            raise ValueError(f"Node {node_id} must have 'reasoning' field")
+        
+        node_ids.add(node_id)
     
     return True
 
 def generate_dv_model(ocr_text, grounded=False, knowledge_content=''):
-    """Generate Data Vault model using GROQ"""
+    """Generate Data Vault model using GROQ with reasoning and strict naming"""
     if not GROQ_API_KEY:
         raise ValueError("GROQ_API_KEY not configured")
     
@@ -201,67 +216,128 @@ def generate_dv_model(ocr_text, grounded=False, knowledge_content=''):
         system_prompt = f"""You are a Data Vault 2.1 expert. Use these guidelines:
 {knowledge_content[:2000]}"""
     
-    # IMPROVED PROMPT - More explicit about Hub vs Link identification
-    user_prompt = f"""Analyze this source schema and convert it to Data Vault 2.1 model.
+    user_prompt = f"""Analyze this source schema and convert it to Data Vault 2.1 model WITH REASONING.
 
 SOURCE SCHEMA:
 {ocr_text[:3000]}
 
-CRITICAL RULES FOR DATA VAULT 2.1:
+CLASSIFICATION DECISION TREE:
+
+STEP 1: "Is this a PRIMARY THING the business cares about independently?"
+   - YES → HUB (Customer, Product, Film, Store, Employee, Actor, Inventory, City, Country)
+   - NO → Go to STEP 2
+
+STEP 2: "Does it CONNECT multiple business things (many-to-many relationship)?"
+   - YES → LINK (Actor_Film, Customer_Order, Film_Category, Inventory_Store, City_Country)
+   - NO → Go to STEP 3
+
+STEP 3: "Does it DESCRIBE/ADD CONTEXT to another entity with non-key attributes?"
+   - YES → SATELLITE (Customer_Details, Order_Status, Film_Metadata)
+   - NO → Likely an error or derived table
+
+KEY TESTS FOR CLASSIFICATION:
+- HUB test: "Would we query/care about this entity independently?" If YES → HUB
+- LINK test: "Does this answer 'many X relate to many Y'?" If YES → LINK
+- SAT test: "Is this only useful as context for something else?" If YES → SATELLITE
+
+MANDATORY NAMING CONVENTION - STRICT ENFORCEMENT:
+- ALL Hubs MUST start with "Hub_" → Hub_Actor, Hub_Film, Hub_Customer, Hub_Store, Hub_City
+- ALL Links MUST start with "Link_" → Link_Actor_Film, Link_Customer_Order, Link_Film_Category
+- ALL Satellites MUST start with "Sat_" → Sat_Actor_Profile, Sat_Film_Details, Sat_Customer_Contact
+
+This prevents confusion and ensures clarity. FAILURE TO FOLLOW NAMING = INVALID MODEL.
+
+DATA VAULT 2.1 STRUCTURE:
 
 1. HUBS = Core business entities (main tables/nouns)
-   - These are the PRIMARY entities in your business
-   - Examples: Customer, Order, Product, Actor, Film, Store, City, Country, Inventory
+   - Primary entities that exist independently
    - Contain ONLY the business key column
-   - Name format: Hub_EntityName (e.g., Hub_Customer, Hub_Actor, Hub_Film)
+   - Examples: Hub_Customer, Hub_Actor, Hub_Film, Hub_Store, Hub_City, Hub_Country
+   - Name format: Hub_EntityName
 
-2. LINKS = Relationships BETWEEN two or more Hubs (association/junction tables)
-   - These represent many-to-many relationships or associations
-   - Connect 2 or more hubs together
-   - Examples: Link_Actor_Film (connects Hub_Actor ↔ Hub_Film)
-   - Examples: Link_Film_Category (connects Hub_Film ↔ Hub_Category)
-   - Name format: Link_Entity1_Entity2 (e.g., Link_Customer_Order, Link_Actor_Film)
-   - Must have "connects" array listing the Hub IDs it connects
+2. LINKS = Relationships BETWEEN Hubs (association/junction tables)
+   - Represent many-to-many relationships or business events
+   - Must have "connects" array listing Hub IDs it bridges
+   - Examples: Link_Actor_Film, Link_Customer_Order, Link_Inventory_Store
+   - Name format: Link_Entity1_Entity2
+   - CRITICAL: Links connect 2+ independent Hubs
 
 3. SATELLITES = Descriptive attributes (non-key columns)
    - Contains all descriptive/contextual data
    - Must have a parent Hub or Link
-   - Examples: Sat_Customer_Details, Sat_Film_Details
-   - Name format: Sat_EntityName (e.g., Sat_Customer, Sat_Actor)
-
-IDENTIFICATION LOGIC:
-- If it's a MAIN TABLE with a primary key → Create a HUB
-- If it's a JUNCTION/ASSOCIATION table connecting two entities → Create a LINK
-- If it's COLUMNS/ATTRIBUTES of an entity → Create SATELLITES attached to the hub
+   - Examples: Sat_Customer_Details, Sat_Film_Metadata, Sat_Actor_Profile
+   - Name format: Sat_ParentEntity_Descriptor
+   - Each satellite should have a clear, descriptive purpose
 
 EDGE RULES:
-- Hub → Satellite: Draw edge FROM hub TO its satellite
-- Hub → Link: Draw edge FROM hub TO the link (for each hub the link connects)
+- Hub → Satellite: FROM hub TO its satellite (one hub can have many satellites)
+- Hub → Link: FROM hub TO the link (for each hub the link connects)
 
-OUTPUT FORMAT (valid JSON only, NO markdown, NO code blocks, NO explanations):
+REASONING REQUIREMENT:
+Every node MUST have a "reasoning" field that explains:
+1. Which test it passed (HUB/LINK/SAT test)
+2. Why it's NOT something else
+3. How it's used in the business
+
+Example reasoning:
+- HUB: "Passes HUB TEST. Actors are independent business entities queried and analyzed standalone. Not a descriptor of something else."
+- LINK: "Passes LINK TEST. Many actors appear in many films (many-to-many). This junction table captures cast assignments."
+- SAT: "Passes SAT TEST. Actor birth date only meaningful in context of Hub_Actor. Cannot exist independently."
+
+OUTPUT FORMAT (VALID JSON ONLY - NO markdown, NO code blocks):
 {{
   "nodes": [
-    {{"id": "Hub_Actor", "type": "hub", "businessKey": "actor_id", "attributes": ["actor_id"]}},
-    {{"id": "Hub_Film", "type": "hub", "businessKey": "film_id", "attributes": ["film_id"]}},
-    {{"id": "Link_Actor_Film", "type": "link", "connects": ["Hub_Actor", "Hub_Film"]}},
-    {{"id": "Sat_Actor", "type": "satellite", "parent": "Hub_Actor", "attributes": ["first_name", "last_name", "last_update"]}},
-    {{"id": "Sat_Film", "type": "satellite", "parent": "Hub_Film", "attributes": ["title", "description", "release_year", "length"]}}
+    {{
+      "id": "Hub_Actor",
+      "type": "hub",
+      "businessKey": "actor_id",
+      "attributes": ["actor_id"],
+      "reasoning": "Passes HUB TEST: Yes. Actors are independent business entities. We query actors by themselves, analyze careers, manage rosters. Not a descriptor of another entity."
+    }},
+    {{
+      "id": "Hub_Film",
+      "type": "hub",
+      "businessKey": "film_id",
+      "attributes": ["film_id"],
+      "reasoning": "Passes HUB TEST: Yes. Films are core business inventory. We query films independently for catalog analysis, revenue reporting, distribution planning. Independent entity."
+    }},
+    {{
+      "id": "Link_Actor_Film",
+      "type": "link",
+      "connects": ["Hub_Actor", "Hub_Film"],
+      "reasoning": "Passes LINK TEST: Yes. Many-to-many: one actor in many films, one film has many actors. This junction table captures the cast assignments. Not a Hub (no independent business key) and not a Satellite (connects entities)."
+    }},
+    {{
+      "id": "Sat_Actor_Profile",
+      "type": "satellite",
+      "parent": "Hub_Actor",
+      "attributes": ["first_name", "last_name", "birth_date"],
+      "reasoning": "Passes SAT TEST: Yes. Descriptive attributes of actors. Only meaningful in context of Hub_Actor. Cannot exist without knowing whose profile this is. Pure context/detail."
+    }},
+    {{
+      "id": "Sat_Film_Details",
+      "type": "satellite",
+      "parent": "Hub_Film",
+      "attributes": ["title", "description", "release_year", "length", "rating"],
+      "reasoning": "Passes SAT TEST: Yes. Content descriptors for films. Mutable attributes separated from business key per DV best practices. Only meaningful in context of specific film."
+    }}
   ],
   "edges": [
     {{"from": "Hub_Actor", "to": "Link_Actor_Film"}},
     {{"from": "Hub_Film", "to": "Link_Actor_Film"}},
-    {{"from": "Hub_Actor", "to": "Sat_Actor"}},
-    {{"from": "Hub_Film", "to": "Sat_Film"}}
+    {{"from": "Hub_Actor", "to": "Sat_Actor_Profile"}},
+    {{"from": "Hub_Film", "to": "Sat_Film_Details"}}
   ]
 }}
 
-IMPORTANT REMINDERS:
-- Every main entity (table with PK) should become a HUB
-- Every relationship/junction table should become a LINK
-- Every set of descriptive columns should become a SATELLITE
+CRITICAL REMINDERS:
+- EVERY node ID must have correct prefix (Hub_/Link_/Sat_) - NO EXCEPTIONS
+- EVERY node must have "reasoning" field
+- Reasoning must reference which TEST it passed
 - Hubs connect TO Links (Hub → Link direction)
 - Hubs connect TO Satellites (Hub → Satellite direction)
 - Links must have "connects" array with Hub IDs
+- Do NOT create ambiguous names like "Actor" without prefix
 
 Now analyze the schema above and generate the Data Vault model as JSON."""
     
@@ -389,14 +465,13 @@ def upload_file():
             extracted_text = extract_text_ocr(filepath)
             print(f"✅ Text extracted: {len(extracted_text)} chars", flush=True)
             
-            # Store in database - with explicit error handling
+            # Store in database
             print(f"💾 Storing in database...", flush=True)
             
             try:
                 conn = get_sqlite_connection()
                 cursor = conn.cursor()
                 
-                # Simple, fast insert
                 cursor.execute(
                     "INSERT INTO ocr_results (filename, extracted_text, created_at) VALUES (?, ?, ?)",
                     (filename, extracted_text, datetime.now().isoformat())
