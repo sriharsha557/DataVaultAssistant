@@ -15,16 +15,18 @@ document.addEventListener('DOMContentLoaded', function() {
                     'label': 'data(label)',
                     'text-valign': 'center',
                     'text-halign': 'center',
-                    'font-size': '12px',
+                    'font-size': '11px',
                     'font-weight': '600',
                     'color': 'white',
                     'text-outline-width': 2,
                     'text-outline-color': 'data(borderColor)',
-                    'width': 140,
-                    'height': 70,
+                    'width': 130,
+                    'height': 60,
                     'shape': 'roundrectangle',
                     'text-wrap': 'wrap',
-                    'text-max-width': '120px'
+                    'text-max-width': '110px',
+                    'cursor': 'pointer',
+                    'padding': '5px'
                 }
             },
             {
@@ -43,8 +45,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     'border-width': 4,
                     'border-color': '#43a047',
                     'shape': 'diamond',
-                    'width': 120,
-                    'height': 120
+                    'width': 110,
+                    'height': 110
                 }
             },
             {
@@ -59,13 +61,13 @@ document.addEventListener('DOMContentLoaded', function() {
             {
                 selector: 'edge',
                 style: {
-                    'width': 3,
-                    'line-color': '#999',
-                    'target-arrow-color': '#999',
+                    'width': 2,
+                    'line-color': '#bbb',
+                    'target-arrow-color': '#bbb',
                     'target-arrow-shape': 'triangle',
                     'curve-style': 'bezier',
-                    'arrow-scale': 1.5,
-                    'opacity': 0.8
+                    'arrow-scale': 1.2,
+                    'opacity': 0.7
                 }
             },
             {
@@ -79,7 +81,7 @@ document.addEventListener('DOMContentLoaded', function() {
             {
                 selector: 'edge:selected',
                 style: {
-                    'width': 5,
+                    'width': 4,
                     'line-color': '#ff4081',
                     'target-arrow-color': '#ff4081'
                 }
@@ -87,60 +89,43 @@ document.addEventListener('DOMContentLoaded', function() {
         ]
     });
 
-    // Enhanced click handler for nodes with reasoning
+    // Enhanced click handler for nodes with reasoning display
     cy.on('tap', 'node', function(evt) {
         const node = evt.target;
         const data = node.data();
         
         let details = '';
         
-        // Type badge
-        const typeColors = {
-            'hub': '#4a90e2',
-            'link': '#66bb6a',
-            'satellite': '#ffa726'
-        };
-        const typeColor = typeColors[data.type] || '#999';
-        
-        // Main classification
-        details += `📌 TYPE: ${data.type.toUpperCase()}\n`;
+        details += `TYPE: ${data.type.toUpperCase()}\n`;
         details += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
         
-        // WHY? - Show reasoning
+        // REASONING - This is the critical part
         if (data.reasoning) {
-            details += `❓ WHY IS THIS A ${data.type.toUpperCase()}?\n`;
+            details += `WHY IS THIS A ${data.type.toUpperCase()}?\n`;
             details += `${data.reasoning}\n\n`;
         }
         
         // Type-specific details
         if (data.type === 'hub') {
             if (data.businessKey) {
-                details += `🔑 BUSINESS KEY: ${data.businessKey}\n`;
+                details += `BUSINESS KEY: ${data.businessKey}\n`;
             }
             if (data.attributes && data.attributes.length > 0) {
-                details += `📊 KEY ATTRIBUTES: ${data.attributes.join(', ')}\n`;
+                details += `ATTRIBUTES: ${data.attributes.join(', ')}\n`;
             }
-            details += `\n💡 This is an independent business entity.\n`;
-            details += `It can be queried and analyzed on its own.\n`;
         }
-        
         else if (data.type === 'link') {
             if (data.connects && data.connects.length > 0) {
-                details += `🔗 CONNECTS: ${data.connects.join(' ↔ ')}\n\n`;
-                details += `💡 This represents a many-to-many relationship.\n`;
-                details += `It bridges multiple business entities.\n`;
+                details += `CONNECTS: ${data.connects.join(' ↔ ')}\n`;
             }
         }
-        
         else if (data.type === 'satellite') {
             if (data.parent) {
-                details += `👨‍👩‍👧 PARENT ENTITY: ${data.parent}\n`;
+                details += `PARENT: ${data.parent}\n`;
             }
             if (data.attributes && data.attributes.length > 0) {
-                details += `📝 ATTRIBUTES: ${data.attributes.join(', ')}\n`;
+                details += `ATTRIBUTES: ${data.attributes.join(', ')}\n`;
             }
-            details += `\n💡 This describes a parent entity.\n`;
-            details += `It provides context and detail, not independent data.\n`;
         }
         
         details += `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
@@ -189,15 +174,12 @@ function showNodeDetails(label, type, details) {
         });
     }
     
-    const typeColors = {
-        'hub': '#4a90e2',
-        'link': '#66bb6a',
-        'satellite': '#ffa726'
-    };
+    const titleEl = modal.querySelector('#nodeDetailsTitle');
+    titleEl.textContent = label;
+    titleEl.className = `type-${type}`;
     
-    modal.querySelector('#nodeDetailsTitle').textContent = label;
-    modal.querySelector('#nodeDetailsTitle').style.borderBottomColor = typeColors[type];
-    modal.querySelector('#nodeDetailsBody').textContent = details;
+    const bodyEl = modal.querySelector('#nodeDetailsBody');
+    bodyEl.textContent = details;
     
     modal.style.display = 'block';
 }
@@ -229,19 +211,16 @@ async function checkConfig() {
         
         const data = await parseJSON(response);
         
-        document.getElementById('ocrStatus').textContent = data.ocr_configured ? '✅ Configured' : '❌ Not Set';
+        document.getElementById('ocrStatus').textContent = data.ocr_configured ? 'Configured' : 'Not Set';
         document.getElementById('ocrStatus').className = `status-value ${data.ocr_configured ? 'success' : 'error'}`;
         
-        document.getElementById('groqStatus').textContent = data.groq_configured ? '✅ Configured' : '❌ Not Set';
+        document.getElementById('groqStatus').textContent = data.groq_configured ? 'Configured' : 'Not Set';
         document.getElementById('groqStatus').className = `status-value ${data.groq_configured ? 'success' : 'error'}`;
         
-        if (data.database) {
-            console.log(`Database: ${data.database}`);
-        }
     } catch (error) {
         console.error('Config check failed:', error);
-        document.getElementById('ocrStatus').textContent = '⚠️ Error';
-        document.getElementById('groqStatus').textContent = '⚠️ Error';
+        document.getElementById('ocrStatus').textContent = 'Error';
+        document.getElementById('groqStatus').textContent = 'Error';
     }
 }
 
@@ -268,21 +247,21 @@ async function uploadKnowledge() {
         
         if (!response.ok) {
             const data = await parseJSON(response);
-            showStatus('knowledgeStatus', `❌ ${data.error || 'Upload failed'}`, 'error');
+            showStatus('knowledgeStatus', `${data.error || 'Upload failed'}`, 'error');
             return;
         }
         
         const data = await parseJSON(response);
         
         if (data.success) {
-            showStatus('knowledgeStatus', '✅ Methodology uploaded successfully!', 'success');
+            showStatus('knowledgeStatus', 'Methodology uploaded successfully!', 'success');
             fileInput.value = '';
         } else {
-            showStatus('knowledgeStatus', `❌ ${data.error || 'Unknown error'}`, 'error');
+            showStatus('knowledgeStatus', `${data.error || 'Unknown error'}`, 'error');
         }
     } catch (error) {
         console.error('Knowledge upload error:', error);
-        showStatus('knowledgeStatus', `❌ Upload failed: ${error.message}`, 'error');
+        showStatus('knowledgeStatus', `Upload failed: ${error.message}`, 'error');
     }
 }
 
@@ -300,7 +279,7 @@ async function uploadSource() {
     formData.append('file', file);
     
     document.getElementById('uploadBtn').disabled = true;
-    showStatus('uploadStatus', '⏳ Extracting text via OCR... This may take up to 2 minutes.', 'info');
+    showStatus('uploadStatus', 'Extracting text via OCR... This may take up to 2 minutes.', 'info');
     
     try {
         const response = await fetch('/api/upload', {
@@ -310,7 +289,7 @@ async function uploadSource() {
         
         if (!response.ok) {
             const data = await parseJSON(response);
-            showStatus('uploadStatus', `❌ ${data.error || 'Upload failed'}`, 'error');
+            showStatus('uploadStatus', `${data.error || 'Upload failed'}`, 'error');
             return;
         }
         
@@ -325,11 +304,11 @@ async function uploadSource() {
             
             fileInput.value = '';
         } else {
-            showStatus('uploadStatus', `❌ ${data.error || 'Extraction failed'}`, 'error');
+            showStatus('uploadStatus', `${data.error || 'Extraction failed'}`, 'error');
         }
     } catch (error) {
         console.error('Upload error:', error);
-        showStatus('uploadStatus', `❌ Upload failed: ${error.message}`, 'error');
+        showStatus('uploadStatus', `Upload failed: ${error.message}`, 'error');
     } finally {
         document.getElementById('uploadBtn').disabled = false;
     }
@@ -345,7 +324,7 @@ async function submitManualSchema() {
     }
     
     document.getElementById('manualBtn').disabled = true;
-    showStatus('uploadStatus', '⏳ Processing manual schema...', 'info');
+    showStatus('uploadStatus', 'Processing manual schema...', 'info');
     
     try {
         const response = await fetch('/api/manual-schema', {
@@ -360,7 +339,7 @@ async function submitManualSchema() {
         
         if (!response.ok) {
             const data = await parseJSON(response);
-            showStatus('uploadStatus', `❌ ${data.error || 'Processing failed'}`, 'error');
+            showStatus('uploadStatus', `${data.error || 'Processing failed'}`, 'error');
             return;
         }
         
@@ -373,11 +352,11 @@ async function submitManualSchema() {
             document.getElementById('ocrPreviewText').value = fullOcrText;
             document.getElementById('ocrPreviewModal').style.display = 'block';
         } else {
-            showStatus('uploadStatus', `❌ ${data.error || 'Processing failed'}`, 'error');
+            showStatus('uploadStatus', `${data.error || 'Processing failed'}`, 'error');
         }
     } catch (error) {
         console.error('Manual schema error:', error);
-        showStatus('uploadStatus', `❌ Processing failed: ${error.message}`, 'error');
+        showStatus('uploadStatus', `Processing failed: ${error.message}`, 'error');
     } finally {
         document.getElementById('manualBtn').disabled = false;
     }
@@ -400,7 +379,7 @@ async function confirmOcrAndGenerate() {
     }
     
     if (editedText !== fullOcrText) {
-        console.log('📝 Text was edited, updating in database...');
+        console.log('Text was edited, updating in database...');
         
         try {
             const response = await fetch('/api/update-ocr', {
@@ -417,7 +396,7 @@ async function confirmOcrAndGenerate() {
             if (!response.ok) {
                 console.error('Failed to update edited text');
             } else {
-                console.log('✅ Updated text saved');
+                console.log('Updated text saved');
                 fullOcrText = editedText;
             }
         } catch (error) {
@@ -426,7 +405,7 @@ async function confirmOcrAndGenerate() {
     }
     
     document.getElementById('ocrPreviewModal').style.display = 'none';
-    showStatus('uploadStatus', '✅ Schema loaded successfully! Ready to generate.', 'success');
+    showStatus('uploadStatus', 'Schema loaded successfully! Ready to generate.', 'success');
     document.getElementById('generateBtn').disabled = false;
 }
 
@@ -440,7 +419,7 @@ async function generateModel() {
     const grounded = document.getElementById('groundedMode').checked;
     
     document.getElementById('generateBtn').disabled = true;
-    showStatus('generateStatus', '🧠 Generating Data Vault 2.1 model with AI... This may take up to 60 seconds.', 'info');
+    showStatus('generateStatus', 'Generating Data Vault 2.1 model with AI... This may take up to 60 seconds.', 'info');
     
     try {
         const response = await fetch('/api/generate', {
@@ -456,7 +435,7 @@ async function generateModel() {
         
         if (!response.ok) {
             const data = await parseJSON(response);
-            showStatus('generateStatus', `❌ ${data.error || 'Generation failed'}`, 'error');
+            showStatus('generateStatus', `${data.error || 'Generation failed'}`, 'error');
             return;
         }
         
@@ -464,31 +443,31 @@ async function generateModel() {
         
         if (data.success && data.model) {
             currentModel = data.model;
-            showStatus('generateStatus', '✅ Model generated successfully!', 'success');
+            showStatus('generateStatus', 'Model generated successfully!', 'success');
             visualizeModel(data.model);
             updateStats(data.model);
         } else {
-            showStatus('generateStatus', `❌ ${data.error || 'No model returned'}`, 'error');
+            showStatus('generateStatus', `${data.error || 'No model returned'}`, 'error');
         }
     } catch (error) {
         console.error('Generate error:', error);
-        showStatus('generateStatus', `❌ Generation failed: ${error.message}`, 'error');
+        showStatus('generateStatus', `Generation failed: ${error.message}`, 'error');
     } finally {
         document.getElementById('generateBtn').disabled = false;
     }
 }
 
-// Visualize model with 3-layer hierarchy
+// Visualize model with proper 3-layer hierarchy - NO OVERLAPPING
 function visualizeModel(model) {
     cy.elements().remove();
     
     if (!model.nodes || model.nodes.length === 0) {
-        showStatus('generateStatus', '⚠️ Model has no nodes', 'error');
+        showStatus('generateStatus', 'Model has no nodes', 'error');
         return;
     }
     
     try {
-        console.log('🎨 Starting visualization...', model);
+        console.log('Starting visualization...', model);
         
         const nodeIds = new Set();
         const validNodes = [];
@@ -501,14 +480,16 @@ function visualizeModel(model) {
             validNodes.push({ ...node, id: sanitizedId });
         });
         
-        console.log(`✅ Validated ${validNodes.length} nodes`);
+        console.log(`Validated ${validNodes.length} nodes`);
         
+        // Separate by type
         const hubNodes = validNodes.filter(n => n.type === 'hub');
         const linkNodes = validNodes.filter(n => n.type === 'link');
         const satelliteNodes = validNodes.filter(n => n.type === 'satellite');
         
-        console.log(`📊 ${hubNodes.length} hubs, ${linkNodes.length} links, ${satelliteNodes.length} satellites`);
+        console.log(`${hubNodes.length} hubs, ${linkNodes.length} links, ${satelliteNodes.length} satellites`);
         
+        // Add nodes to Cytoscape WITH FULL NAMES and REASONING
         validNodes.forEach(node => {
             const borderColor = node.type === 'hub' ? '#2c5aa0' : 
                                node.type === 'link' ? '#43a047' : '#f57c00';
@@ -523,12 +504,13 @@ function visualizeModel(model) {
                     parent: node.parent || '',
                     connects: node.connects || [],
                     attributes: node.attributes || [],
-                    reasoning: node.reasoning || '',
+                    reasoning: node.reasoning || 'No reasoning provided',
                     borderColor: borderColor
                 }
             });
         });
         
+        // Add edges
         const edgeArray = [];
         const allEdges = new Set();
         
@@ -558,95 +540,87 @@ function visualizeModel(model) {
             });
         });
         
-        console.log(`✅ Added ${edgeArray.length} edges`);
+        console.log(`Added ${edgeArray.length} edges`);
         
-        // Position nodes in 3 layers with better spacing
-        const hubs = cy.nodes('[type="hub"]');
-        const links = cy.nodes('[type="link"]');
-        const satellites = cy.nodes('[type="satellite"]');
-        
+        // PROPER 3-LAYER POSITIONING WITH NO OVERLAP
         const viewportWidth = document.getElementById('cy').offsetWidth || 1400;
+        const viewportHeight = document.getElementById('cy').offsetHeight || 800;
         const centerX = viewportWidth / 2;
+        
+        // LAYER 1: HUBS (TOP)
+        const hubY = 100;
         const hubSpacing = 280;
-        const satSpacing = 200;
-        const verticalGap = 350;
+        const hubsPerRow = Math.min(5, Math.max(1, Math.ceil(Math.sqrt(hubNodes.length))));
         
-        // Layer 1: HUBS at TOP (row-based layout)
-        if (hubs.length > 0) {
-            const hubsPerRow = 4;
-            hubs.forEach((node, idx) => {
-                const row = Math.floor(idx / hubsPerRow);
-                const col = idx % hubsPerRow;
-                const hubsInThisRow = Math.min(hubs.length - row * hubsPerRow, hubsPerRow);
-                const rowWidth = (hubsInThisRow - 1) * hubSpacing;
-                const x = centerX - rowWidth / 2 + col * hubSpacing;
-                const y = 100 + row * 180;
-                node.position({ x, y });
-            });
-        }
+        hubNodes.forEach((node, idx) => {
+            const row = Math.floor(idx / hubsPerRow);
+            const col = idx % hubsPerRow;
+            const totalWidth = (hubsPerRow - 1) * hubSpacing;
+            const x = centerX - totalWidth / 2 + col * hubSpacing;
+            const y = hubY + row * 150;
+            cy.getElementById(node.id).position({ x, y });
+        });
         
-        const hubRowCount = Math.ceil(hubs.length / 4);
-        const hubBottomY = 100 + (hubRowCount - 1) * 180;
+        const hubHeight = Math.ceil(hubNodes.length / hubsPerRow) * 150 + hubY;
         
-        // Layer 2: LINKS in MIDDLE (row-based layout)
-        const linkY = hubBottomY + verticalGap;
-        if (links.length > 0) {
-            const linksPerRow = 4;
-            links.forEach((node, idx) => {
-                const row = Math.floor(idx / linksPerRow);
-                const col = idx % linksPerRow;
-                const linksInThisRow = Math.min(links.length - row * linksPerRow, linksPerRow);
-                const rowWidth = (linksInThisRow - 1) * hubSpacing;
-                const x = centerX - rowWidth / 2 + col * hubSpacing;
-                const y = linkY + row * 200;
-                node.position({ x, y });
-            });
-        }
+        // LAYER 2: LINKS (MIDDLE) - SIGNIFICANT VERTICAL GAP
+        const linkY = hubHeight + 300;
+        const linkSpacing = 280;
+        const linksPerRow = Math.min(5, Math.max(1, Math.ceil(Math.sqrt(linkNodes.length))));
         
-        const linkRowCount = Math.ceil(links.length / 4);
-        const linkBottomY = linkY + (linkRowCount - 1) * 200;
+        linkNodes.forEach((node, idx) => {
+            const row = Math.floor(idx / linksPerRow);
+            const col = idx % linksPerRow;
+            const totalWidth = (linksPerRow - 1) * linkSpacing;
+            const x = centerX - totalWidth / 2 + col * linkSpacing;
+            const y = linkY + row * 170;
+            cy.getElementById(node.id).position({ x, y });
+        });
         
-        // Layer 3: SATELLITES at BOTTOM (wider spread, more rows)
-        const satY = linkBottomY + verticalGap;
-        if (satellites.length > 0) {
-            const satsPerRow = 6;
-            satellites.forEach((node, idx) => {
-                const row = Math.floor(idx / satsPerRow);
-                const col = idx % satsPerRow;
-                const satsInThisRow = Math.min(satellites.length - row * satsPerRow, satsPerRow);
-                const rowWidth = (satsInThisRow - 1) * satSpacing;
-                const x = centerX - rowWidth / 2 + col * satSpacing;
-                const y = satY + row * 160;
-                node.position({ x, y });
-            });
-        }
+        const linkHeight = Math.ceil(linkNodes.length / linksPerRow) * 170 + linkY;
         
-        console.log(`Positioned: Hubs at y=100, Links at y=${linkY}, Satellites at y=${satY}`);
+        // LAYER 3: SATELLITES (BOTTOM) - WIDER SPREAD, LARGER GAP
+        const satY = linkHeight + 300;
+        const satSpacing = 220;
+        const satsPerRow = Math.min(7, Math.max(1, Math.ceil(Math.sqrt(satelliteNodes.length))));
         
+        satelliteNodes.forEach((node, idx) => {
+            const row = Math.floor(idx / satsPerRow);
+            const col = idx % satsPerRow;
+            const totalWidth = (satsPerRow - 1) * satSpacing;
+            const x = centerX - totalWidth / 2 + col * satSpacing;
+            const y = satY + row * 140;
+            cy.getElementById(node.id).position({ x, y });
+        });
+        
+        console.log(`Positioned: Hubs at ${hubY}, Links at ${linkY}, Satellites at ${satY}`);
+        
+        // Apply preset layout
         cy.layout({
             name: 'preset',
             fit: false,
             padding: 50
         }).run();
         
-        cy.fit(cy.elements(), 100);
+        // Fit to screen with padding
+        cy.fit(cy.elements(), 80);
         
         // Enable dragging for all nodes
         cy.nodes().forEach(node => {
             node.grabbable(true);
-            node.pannable(false);
+            node.selectable(true);
         });
         
         console.log('Layout complete!');
         
         showStatus('generateStatus', 
-            `✅ Data Vault visualization complete! ${hubs.length} hubs (blue, top), ${links.length} links (green, middle), ${satellites.length} satellites (orange, bottom)`, 
+            `Data Vault visualization complete! ${hubNodes.length} hubs (blue, top), ${linkNodes.length} links (green, middle), ${satelliteNodes.length} satellites (orange, bottom)`, 
             'success'
         );
         
     } catch (error) {
-        console.error('❌ Visualization error:', error);
-        showStatus('generateStatus', `❌ Visualization failed: ${error.message}`, 'error');
+        console.error('Visualization error:', error);
+        showStatus('generateStatus', `Visualization failed: ${error.message}`, 'error');
     }
 }
 
@@ -671,7 +645,7 @@ function resetLayout() {
 }
 
 function fitToScreen() {
-    cy.fit(100);
+    cy.fit(cy.elements(), 80);
 }
 
 function zoomIn() {
@@ -711,79 +685,6 @@ function exportCSV() {
     });
     
     downloadFile(csv, 'data_vault_model.csv', 'text/csv');
-}
-
-function exportDrawIO() {
-    if (!currentModel) {
-        alert('No model to export. Please generate a model first.');
-        return;
-    }
-    
-    let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
-    xml += '<mxfile host="app.diagrams.net">\n';
-    xml += '  <diagram name="Data Vault Model">\n';
-    xml += '    <mxGraphModel>\n';
-    xml += '      <root>\n';
-    xml += '        <mxCell id="0"/>\n';
-    xml += '        <mxCell id="1" parent="0"/>\n';
-    
-    let nodeId = 2;
-    const nodeMap = {};
-    
-    const hubs = currentModel.nodes.filter(n => n.type === 'hub');
-    const links = currentModel.nodes.filter(n => n.type === 'link');
-    const satellites = currentModel.nodes.filter(n => n.type === 'satellite');
-    
-    hubs.forEach((node, idx) => {
-        const x = 100 + (idx % 4) * 280;
-        const y = 100 + Math.floor(idx / 4) * 200;
-        nodeMap[node.id] = nodeId;
-        xml += `        <mxCell id="${nodeId}" value="${node.id}" style="rounded=1;fillColor=#4a90e2;strokeColor=#2c5aa0;fontColor=#ffffff;" vertex="1" parent="1">\n`;
-        xml += `          <mxGeometry x="${x}" y="${y}" width="140" height="70" as="geometry"/>\n`;
-        xml += `        </mxCell>\n`;
-        nodeId++;
-    });
-    
-    links.forEach((node, idx) => {
-        const x = 150 + (idx % 4) * 280;
-        const y = 400 + Math.floor(idx / 4) * 220;
-        nodeMap[node.id] = nodeId;
-        xml += `        <mxCell id="${nodeId}" value="${node.id}" style="rhombus;fillColor=#66bb6a;strokeColor=#43a047;fontColor=#ffffff;" vertex="1" parent="1">\n`;
-        xml += `          <mxGeometry x="${x}" y="${y}" width="120" height="120" as="geometry"/>\n`;
-        xml += `        </mxCell>\n`;
-        nodeId++;
-    });
-    
-    satellites.forEach((node, idx) => {
-        const x = 100 + (idx % 5) * 260;
-        const y = 700 + Math.floor(idx / 5) * 180;
-        nodeMap[node.id] = nodeId;
-        xml += `        <mxCell id="${nodeId}" value="${node.id}" style="rounded=1;fillColor=#ffa726;strokeColor=#f57c00;fontColor=#ffffff;" vertex="1" parent="1">\n`;
-        xml += `          <mxGeometry x="${x}" y="${y}" width="140" height="70" as="geometry"/>\n`;
-        xml += `        </mxCell>\n`;
-        nodeId++;
-    });
-    
-    if (currentModel.edges) {
-        currentModel.edges.forEach(edge => {
-            const sourceId = nodeMap[edge.from || edge.source];
-            const targetId = nodeMap[edge.to || edge.target];
-            
-            if (sourceId && targetId) {
-                xml += `        <mxCell id="${nodeId}" style="edgeStyle=orthogonalEdgeStyle;rounded=1;" edge="1" parent="1" source="${sourceId}" target="${targetId}">\n`;
-                xml += `          <mxGeometry relative="1" as="geometry"/>\n`;
-                xml += `        </mxCell>\n`;
-                nodeId++;
-            }
-        });
-    }
-    
-    xml += '      </root>\n';
-    xml += '    </mxGraphModel>\n';
-    xml += '  </diagram>\n';
-    xml += '</mxfile>';
-    
-    downloadFile(xml, 'data_vault_model.drawio', 'application/xml');
 }
 
 function downloadFile(content, filename, mimeType) {
